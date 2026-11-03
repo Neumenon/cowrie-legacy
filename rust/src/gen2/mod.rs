@@ -11,6 +11,7 @@
 pub mod address;
 pub mod compress;
 pub mod decode;
+pub mod decode_ref;
 pub mod encode;
 pub mod file;
 pub mod json;

@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 /// Canonical alignment for tensor data (SPEC-v1 §2.5): a tensor's data run begins at a 64-byte
 /// boundary relative to byte 0 of the message.
-const TENSOR_ALIGN: usize = 64;
+pub(crate) const TENSOR_ALIGN: usize = 64;
 
 /// Configurable limits for the Cowrie decoder.
 ///
@@ -645,7 +645,7 @@ fn dtype_bits(dtype: DType) -> u64 {
 /// Total bit count for a tensor (`nelem * dtype_bits`), matching the Python reference.
 /// Returns None on overflow. A rank-0 tensor is a single element; a zero dimension
 /// yields zero elements.
-fn tensor_total_bits(dtype: DType, shape: &[u64]) -> Option<u64> {
+pub(crate) fn tensor_total_bits(dtype: DType, shape: &[u64]) -> Option<u64> {
     let mut nelem: u64 = 1;
     for &d in shape {
         nelem = nelem.checked_mul(d)?;
@@ -734,6 +734,19 @@ mod tests {
     use super::*;
     use crate::gen2::encode::encode;
 
+    /// Encode a value whose wire tag v1 reserves. `encode` refuses these by default —
+    /// that is the defect fix — so the reserved-tag rejection tests force the bytes.
+    fn encode_reserved(v: &Value) -> Vec<u8> {
+        crate::gen2::encode::encode_with_options(
+            v,
+            &crate::gen2::encode::EncodeOptions {
+                allow_reserved: true,
+                ..Default::default()
+            },
+        )
+        .expect("encode reserved kind")
+    }
+
     #[test]
     fn test_roundtrip_primitives() {
         let values = vec![
@@ -814,7 +827,7 @@ mod tests {
             labels: vec!["Person".to_string(), "Employee".to_string()],
             props,
         });
-        let encoded = encode(&node).expect("encode");
+        let encoded = encode_reserved(&node);
         assert!(
             matches!(decode(&encoded), Err(CowrieError::InvalidTag(0x35))),
             "Node tag 0x35 must reject as ERR_RESERVED_TAG"
@@ -832,7 +845,7 @@ mod tests {
             edge_type: "WORKS_AT".to_string(),
             props,
         });
-        let encoded = encode(&edge).expect("encode");
+        let encoded = encode_reserved(&edge);
         assert!(
             matches!(decode(&encoded), Err(CowrieError::InvalidTag(0x36))),
             "Edge tag 0x36 must reject as ERR_RESERVED_TAG"
@@ -848,7 +861,7 @@ mod tests {
             props: BTreeMap::new(),
         }];
         let batch = Value::NodeBatch(NodeBatchData { nodes });
-        let encoded = encode(&batch).expect("encode");
+        let encoded = encode_reserved(&batch);
         assert!(
             matches!(decode(&encoded), Err(CowrieError::InvalidTag(0x37))),
             "NodeBatch tag 0x37 must reject as ERR_RESERVED_TAG"
@@ -864,7 +877,7 @@ mod tests {
             height: 480,
             data: vec![0x89, 0x50, 0x4E, 0x47],
         });
-        let encoded = encode(&val).expect("encode");
+        let encoded = encode_reserved(&val);
         assert!(
             matches!(decode(&encoded), Err(CowrieError::InvalidTag(0x22))),
             "Image tag 0x22 must reject as ERR_RESERVED_TAG"
@@ -880,7 +893,7 @@ mod tests {
             channels: 2,
             data: vec![0x01, 0x02, 0x03, 0x04],
         });
-        let encoded = encode(&val).expect("encode");
+        let encoded = encode_reserved(&val);
         assert!(
             matches!(decode(&encoded), Err(CowrieError::InvalidTag(0x23))),
             "Audio tag 0x23 must reject as ERR_RESERVED_TAG"
@@ -903,7 +916,7 @@ mod tests {
                 height: 200,
                 data: vec![0xFF],
             });
-            let encoded = encode(&val).expect("encode");
+            let encoded = encode_reserved(&val);
             assert!(
                 matches!(decode(&encoded), Err(CowrieError::InvalidTag(0x22))),
                 "Image tag 0x22 must reject as ERR_RESERVED_TAG"
@@ -926,7 +939,7 @@ mod tests {
                 channels: 1,
                 data: vec![0x00],
             });
-            let encoded = encode(&val).expect("encode");
+            let encoded = encode_reserved(&val);
             assert!(
                 matches!(decode(&encoded), Err(CowrieError::InvalidTag(0x23))),
                 "Audio tag 0x23 must reject as ERR_RESERVED_TAG"
