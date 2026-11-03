@@ -118,6 +118,8 @@ struct Reader<'a> {
     data: &'a [u8],
     pos: usize,
     dict: Vec<String>,
+    /// strict mode only: which header-dictionary entries an object field referenced
+    dict_used: Vec<bool>,
     depth: usize,
     opts: &'a DecodeOptions,
     /// When `Some`, every tensor's data run is recorded here in document order during decode.
@@ -130,6 +132,7 @@ impl<'a> Reader<'a> {
             data,
             pos: 0,
             dict: Vec::new(),
+            dict_used: Vec::new(),
             depth: 0,
             opts,
             spans: None,
@@ -161,6 +164,9 @@ impl<'a> Reader<'a> {
             return Err(CowrieError::TooLarge);
         }
         self.dict = Vec::with_capacity(dict_len);
+        if self.opts.strict {
+            self.dict_used = vec![false; dict_len];
+        }
         let mut prev: Option<Vec<u8>> = None;
         for _ in 0..dict_len {
             // Read the raw key bytes so the strict byte-ascending/uniqueness check (§5.3)
@@ -191,6 +197,12 @@ impl<'a> Reader<'a> {
 
         // Read root value
         let value = self.decode_value()?;
+
+        // SPEC §2.4: a dictionary entry no field references is redundant, so its presence
+        // makes the encoding non-canonical. Strict decode must reject it.
+        if self.opts.strict && self.dict_used.iter().any(|u| !u) {
+            return Err(CowrieError::NonCanonical("unused dictionary entry".into()));
+        }
 
         // Verify all input consumed — trailing bytes indicate corruption or concatenated data
         if self.pos < self.data.len() {
@@ -353,6 +365,9 @@ impl<'a> Reader<'a> {
                         ));
                     }
                     last = key_idx as i64;
+                    if self.opts.strict {
+                        self.dict_used[key_idx] = true;
+                    }
                     let key = self.dict[key_idx].clone();
                     let val = self.decode_value()?;
                     obj.insert(key, val);
@@ -499,6 +514,9 @@ impl<'a> Reader<'a> {
                         ));
                     }
                     last = key_idx as i64;
+                    if self.opts.strict {
+                        self.dict_used[key_idx] = true;
+                    }
                     let key = self.dict[key_idx].clone();
                     let val = self.decode_value()?;
                     obj.insert(key, val);

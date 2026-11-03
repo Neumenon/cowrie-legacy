@@ -14,6 +14,7 @@
 #   (c) negative gate (lenient)      (16 anti-malleability fixtures)
 #   (d) negative gate (--strict)     (strict decoders must reject non-canonical)
 #   (e) differential fuzz (150)      (generative cross-lang determinism)
+#   (f) byte-space law               (strict-accepted bytes must BE canonical; mutated corpus)
 #
 # Usage:  bash tools/run_all_gates.sh
 set -euo pipefail
@@ -111,9 +112,14 @@ run "negative_gate --strict" "${PY}" tools/negative_gate.py --strict
 # (e) Generative differential fuzz across all languages.
 run "fuzz_differential 150" "${PY}" tools/fuzz_differential.py 150
 
+# (f) Byte-space canonicality law (§0.2 / §5.3): for all B, if strict_decode(B)=V then encode(V)=B.
+#     Generated population — every golden value, mutated: dictionary pollution, byte edits, truncation.
+#     A strict decoder may reject or echo the input; echoing DIFFERENT bytes is the bug.
+run "law_bytes 6" "${PY}" tools/law_bytes_gate.py 6
+
 echo ""
 echo "=============================================================="
 echo " ✅✅✅  ALL GATES PASS  ✅✅✅"
-echo "   pytest · conformance · content-address · file-identity · tensor-view · negative · negative --strict · fuzz"
+echo "   pytest · conformance · content-address · file-identity · tensor-view · fingerprint · dataset · negative · negative --strict · fuzz · law"
 echo "=============================================================="
 exit 0

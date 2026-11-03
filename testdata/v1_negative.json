@@ -133,5 +133,15 @@
     "hex": "434f57520100000503ffffff",
     "expect": "ERR_INVALID_UTF8",
     "tier": "malformed"
+  },
+  "unused_dict_entry": {
+    "hex": "434f5752010001016145",
+    "expect": "ERR_NON_CANONICAL",
+    "tier": "non-canonical"
+  },
+  "unused_dict_entry_object": {
+    "hex": "434f575201000201610162d10045",
+    "expect": "ERR_NON_CANONICAL",
+    "tier": "non-canonical"
   }
 }

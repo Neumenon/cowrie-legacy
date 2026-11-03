@@ -388,6 +388,10 @@ type reader struct {
 	opts   DecodeOptions // Security limits
 	strict bool          // §5.3 strict-decode: reject non-canonical input
 
+	// dictUsed (strict mode only) marks which header-dictionary entries an object
+	// field referenced. §2.4 forbids unused entries; they make the bytes redundant.
+	dictUsed []bool
+
 	// spans, when non-nil, accumulates one TensorSpan per tensor encountered
 	// during decode, in document order. Threaded through decodeValue so nested
 	// tensors (inside arrays/objects) are captured too.
@@ -645,11 +649,24 @@ func decode(r *reader) (*Value, error) {
 		}
 		dict[i] = s
 	}
+	if r.strict {
+		r.dictUsed = make([]bool, dictLen)
+	}
 
 	// Decode root value
 	val, err := decodeValue(r, dict)
 	if err != nil {
 		return nil, err
+	}
+
+	// §2.4: a dictionary entry no field references is redundant, so the encoding is
+	// non-canonical. Strict decode must reject it.
+	if r.strict {
+		for _, used := range r.dictUsed {
+			if !used {
+				return nil, fmt.Errorf("%w: unused dictionary entry", ErrNonCanonical)
+			}
+		}
 	}
 
 	// Verify all input consumed — trailing bytes indicate corruption or concatenated data
@@ -875,6 +892,9 @@ func decodeValue(r *reader, dict []string) (*Value, error) {
 				return nil, fmt.Errorf("%w: object fields not in ascending dictIdx", ErrNonCanonical)
 			}
 			lastIdx = int64(fieldID)
+			if r.strict {
+				r.dictUsed[fieldID] = true
+			}
 			v, err := decodeValue(r, dict)
 			if err != nil {
 				return nil, err
@@ -1114,6 +1134,9 @@ func decodeValue(r *reader, dict []string) (*Value, error) {
 					return nil, fmt.Errorf("%w: object fields not in ascending dictIdx", ErrNonCanonical)
 				}
 				lastIdx = int64(fieldID)
+				if r.strict {
+					r.dictUsed[fieldID] = true
+				}
 				v, err := decodeValue(r, dict)
 				if err != nil {
 					return nil, err

@@ -32,6 +32,7 @@ class _Decoder:
         self.pos = 0
         self.strict = strict
         self.keys: list[str] = []
+        self.used: list[bool] = []
         self.spans: list[tuple[int, tuple[int, ...], int, int]] = []  # (dtype, shape, data_offset, data_len)
 
     # -- low-level reads --
@@ -78,6 +79,7 @@ class _Decoder:
                     raise self._bad(ERR_NON_CANONICAL, "dictionary not byte-sorted")
             prev = raw
             self.keys.append(key)
+            self.used.append(False)
 
     # -- values (§2.3) --
     def value(self, depth: int = 0) -> object:
@@ -207,6 +209,7 @@ class _Decoder:
                 if self.strict and idx <= last:
                     raise self._bad(ERR_NON_CANONICAL, "object fields not in ascending dictIdx")
                 last = idx
+                self.used[idx] = True
                 obj[self.keys[idx]] = self.value(depth + 1)
             return obj
         raise self._bad(ERR_RESERVED_TAG, f"0x{tag:02x}")
@@ -219,6 +222,8 @@ def decode(data: bytes, strict: bool = True) -> object:
     root = dec.value()
     if dec.pos != len(data):
         raise CowrieError(ERR_TRAILING_DATA)
+    if strict and not all(dec.used):
+        raise CowrieError(ERR_NON_CANONICAL, "unused dictionary entry")
     return root
 
 
@@ -233,4 +238,6 @@ def tensor_spans(data: bytes, strict: bool = True) -> list[tuple[int, tuple[int,
     dec.value()
     if dec.pos != len(data):
         raise CowrieError(ERR_TRAILING_DATA)
+    if strict and not all(dec.used):
+        raise CowrieError(ERR_NON_CANONICAL, "unused dictionary entry")
     return dec.spans

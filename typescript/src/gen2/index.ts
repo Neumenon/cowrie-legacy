@@ -72,6 +72,7 @@ export class CowrieError extends Error {
 // SPEC-v1 §2.6 canonical error codes. The conformance gate extracts the first /ERR_[A-Z0-9_]+/
 // token from stderr, so every decode failure must surface one of these.
 export const ERR_NON_CANONICAL = 'ERR_NON_CANONICAL';
+export const ERR_UNSUPPORTED_COMPRESSION = 'ERR_UNSUPPORTED_COMPRESSION';
 export const ERR_INVALID_UTF8 = 'ERR_INVALID_UTF8';
 export const ERR_INVALID_MAGIC = 'ERR_INVALID_MAGIC';
 export const ERR_INVALID_VERSION = 'ERR_INVALID_VERSION';
@@ -1042,6 +1043,8 @@ export interface TensorSpan {
 class Decoder {
   private pos = 0;
   private dict: string[] = [];
+  /** strict mode only: which header-dictionary entries an object field referenced (§2.4). */
+  private dictUsed: boolean[] = [];
   private depth = 0;
   // fatal:true => decode() THROWS on invalid UTF-8 instead of silently substituting U+FFFD, so we can
   // reject it (ERR_INVALID_UTF8) like the Python oracle / Go / Rust rather than normalizing it.
@@ -1258,6 +1261,9 @@ class Decoder {
             throw new CowrieError(ERR_NON_CANONICAL, 'object fields not in ascending dictIdx');
           }
           lastIdx = fieldId;
+          if (this.strict) {
+            this.dictUsed[fieldId] = true;
+          }
           const key = this.dict[fieldId];
           members[key] = this.decodeValue();
         }
@@ -1401,12 +1407,24 @@ class Decoder {
     if (version !== VERSION) {
       throw new CowrieError(ERR_INVALID_VERSION, `unsupported version: ${version}`);
     }
-    this.readByte(); // compression byte (0x00 = none)
+    const compression = this.readByte();
+    // §2.2: 0x00 none / 0x01 gzip / 0x02 zstd / else ERR_UNSUPPORTED_COMPRESSION, and
+    // "compression is transport only; canonical = 0x00". decode() handles canonical bytes;
+    // a compressed body is framing, and parsing it as if plain would return garbage.
+    if (compression !== Compression.NONE) {
+      throw new CowrieError(
+        ERR_UNSUPPORTED_COMPRESSION,
+        `compression 0x${compression.toString(16)} is transport-only; canonical form is 0x00`,
+      );
+    }
 
     // Dictionary
     const dictLen = this.readUvarintAsNumber();
     if (dictLen > this.limits.maxDictLen) {
       throw new SecurityLimitExceeded('cowrie: dictionary too large');
+    }
+    if (this.strict) {
+      this.dictUsed = new Array<boolean>(dictLen).fill(false);
     }
     let prevKeyBytes: Uint8Array | null = null;
     for (let i = 0; i < dictLen; i++) {
@@ -1442,6 +1460,12 @@ class Decoder {
         throw new CowrieError(ERR_TOO_DEEP, 'nesting depth exceeds native stack');
       }
       throw e;
+    }
+
+    // §2.4: a dictionary entry no field references is redundant, so the encoding is
+    // non-canonical. Strict decode must reject it.
+    if (this.strict && this.dictUsed.some((u) => !u)) {
+      throw new CowrieError(ERR_NON_CANONICAL, 'unused dictionary entry');
     }
 
     // Verify all input consumed — trailing bytes indicate corruption or concatenated data
