@@ -9,9 +9,13 @@ import (
 )
 
 // BenchmarkMultimodalEncode benchmarks encoding a multimodal inference request
-// containing a 640x480 JPEG image (~50KB), a text prompt, and a float32
+// containing a ~50KB binary blob (a 640x480 JPEG), a text prompt, and a float32
 // embedding tensor [1, 768]. Compares Cowrie native types vs JSON (base64) vs
 // manual msgpack-style packing.
+//
+// The blob is a Cowrie Bytes value, not an Image: the Image tag (0x22) is reserved
+// in v1 and every conforming decoder rejects it, so an Image payload could not be
+// decoded at all — which is exactly how this benchmark was silently failing.
 func BenchmarkMultimodalEncode(b *testing.B) {
 	// Simulate a 640x480 JPEG (~50KB)
 	imageData := make([]byte, 50*1024)
@@ -33,7 +37,7 @@ func BenchmarkMultimodalEncode(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
 			v := Object(
-				Member{Key: "image", Value: Image(ImageFormatJPEG, 640, 480, imageData)},
+				Member{Key: "image", Value: Bytes(imageData)}, // v1-legal: Image(0x22) is a reserved tag
 				Member{Key: "prompt", Value: String(prompt)},
 				Member{Key: "embedding", Value: Tensor(DTypeFloat32, embeddingDims, embeddingData)},
 			)
@@ -98,7 +102,7 @@ func BenchmarkMultimodalDecode(b *testing.B) {
 
 	b.Run("Cowrie", func(b *testing.B) {
 		v := Object(
-			Member{Key: "image", Value: Image(ImageFormatJPEG, 640, 480, imageData)},
+			Member{Key: "image", Value: Bytes(imageData)}, // v1-legal: Image(0x22) is a reserved tag
 			Member{Key: "prompt", Value: String(prompt)},
 			Member{Key: "embedding", Value: Tensor(DTypeFloat32, embeddingDims, embeddingData)},
 		)
@@ -168,7 +172,7 @@ func BenchmarkMultimodalSize(b *testing.B) {
 
 	// Cowrie
 	v := Object(
-		Member{Key: "image", Value: Image(ImageFormatJPEG, 640, 480, imageData)},
+		Member{Key: "image", Value: Bytes(imageData)}, // v1-legal: Image(0x22) is a reserved tag
 		Member{Key: "prompt", Value: String(prompt)},
 		Member{Key: "embedding", Value: Tensor(DTypeFloat32, []uint64{1, 768}, embeddingData)},
 	)

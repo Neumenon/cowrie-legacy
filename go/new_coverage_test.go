@@ -131,7 +131,7 @@ func TestEncodeDecode_ExtTypes(t *testing.T) {
 
 	for _, tt := range types {
 		t.Run(tt.name, func(t *testing.T) {
-			data, err := Encode(tt.val)
+			data, err := encodeReserved(tt.val)
 			if err != nil {
 				t.Fatalf("Encode failed: %v", err)
 			}

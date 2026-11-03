@@ -22,7 +22,7 @@ func TestTensorRoundTrip(t *testing.T) {
 	}
 
 	// Encode
-	encoded, err := Encode(v)
+	encoded, err := encodeReserved(v)
 	if err != nil {
 		t.Fatalf("encode failed: %v", err)
 	}
@@ -55,7 +55,7 @@ func TestTensorRoundTrip(t *testing.T) {
 // freeze-blocker #2 reject behavior, not the old round-trip-as-Null/keep.
 func assertReservedTagDecode(t *testing.T, v *Value) {
 	t.Helper()
-	encoded, err := Encode(v)
+	encoded, err := encodeReserved(v)
 	if err != nil {
 		t.Fatalf("encode failed: %v", err)
 	}

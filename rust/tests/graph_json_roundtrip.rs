@@ -6,7 +6,9 @@
 //! would not catch). Confirms the Rust bridge has no analogous bug.
 
 use cowrie_rs::gen2::types::{CowrieError, EdgeBatchData, EdgeData, NodeBatchData, NodeData};
-use cowrie_rs::gen2::{decode, encode, from_json, to_json, Value};
+use cowrie_rs::gen2::{
+    decode, encode_with_options, from_json, to_json, EncodeOptions, Value,
+};
 use std::collections::BTreeMap;
 
 fn props(pairs: &[(&str, Value)]) -> BTreeMap<String, Value> {
@@ -23,7 +25,16 @@ fn props(pairs: &[(&str, Value)]) -> BTreeMap<String, Value> {
 fn json_then_encode(v: &Value, reserved_tag: u8) -> Value {
     let js = to_json(v).expect("to_json");
     let back = from_json(&js).expect("from_json");
-    let bytes = encode(&back).expect("encode after JSON round-trip");
+    // Graph tags are reserved in v1, so the encode must be forced: the point of this
+    // test is the JSON bridge + encode path, not the tag policy.
+    let bytes = encode_with_options(
+        &back,
+        &EncodeOptions {
+            allow_reserved: true,
+            ..Default::default()
+        },
+    )
+    .expect("encode after JSON round-trip");
     assert!(
         matches!(decode(&bytes), Err(CowrieError::InvalidTag(t)) if t == reserved_tag),
         "reserved graph tag 0x{:02x} must reject on decode",

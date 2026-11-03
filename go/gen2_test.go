@@ -967,7 +967,7 @@ func TestFromJSONEnrichedVsStrict(t *testing.T) {
 // ERR_RESERVED_TAG (a *TagError). These tests assert freeze-blocker #2.
 func assertGraphReserved(t *testing.T, v *Value) {
 	t.Helper()
-	encoded, err := Encode(v)
+	encoded, err := encodeReserved(v)
 	if err != nil {
 		t.Fatalf("Encode failed: %v", err)
 	}

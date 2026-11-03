@@ -29,7 +29,7 @@ func TestGraphJSONRoundtrip(t *testing.T) {
 			t.Fatalf("FromJSON: %v", err)
 		}
 
-		_, err = Encode(back)
+		_, err = encodeReserved(back)
 		if err != nil {
 			t.Fatalf("Encode after round-trip: %v", err)
 		}
@@ -66,7 +66,7 @@ func TestGraphJSONRoundtrip(t *testing.T) {
 			t.Fatalf("FromJSON: %v", err)
 		}
 
-		_, err = Encode(back)
+		_, err = encodeReserved(back)
 		if err != nil {
 			t.Fatalf("Encode after round-trip: %v", err)
 		}
@@ -94,7 +94,7 @@ func TestGraphJSONRoundtrip(t *testing.T) {
 			t.Fatalf("FromJSON: %v", err)
 		}
 
-		_, err = Encode(back)
+		_, err = encodeReserved(back)
 		if err != nil {
 			t.Fatalf("Encode after round-trip: %v", err)
 		}
@@ -117,7 +117,7 @@ func TestGraphJSONRoundtrip(t *testing.T) {
 			t.Fatalf("FromJSON: %v", err)
 		}
 
-		_, err = Encode(back)
+		_, err = encodeReserved(back)
 		if err != nil {
 			t.Fatalf("Encode after round-trip: %v", err)
 		}

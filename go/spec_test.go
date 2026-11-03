@@ -94,7 +94,8 @@ func TestSpecCoreTags(t *testing.T) {
 		{"array_fixarray", Array(Int64(1)), 0xC1}, // v3: fixarray len=1
 		{"object_fixmap", Object(Member{Key: "k", Value: Int64(1)}), 0xD1}, // v3: fixmap count=1
 		{"bytes", Bytes([]byte{1, 2, 3}), 0x08},
-		{"uint64", Uint64(42), 0x09},
+		{"uint64", Uint64(18446744073709551615), 0x09},         // only values above i64 need UINT
+		{"uint64_fits_int", Uint64(42), 0x6A},             // canonical: a uint that fits i64 is written as Int
 		{"decimal128", NewDecimal128(2, [16]byte{}), 0x0A},
 		{"datetime64", Datetime64(0), 0x0B},
 		{"uuid128", UUID128([16]byte{}), 0x0C},
@@ -132,7 +133,7 @@ func TestSpecV21Tags(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			data, err := Encode(tt.value)
+			data, err := encodeReserved(tt.value)
 			if err != nil {
 				t.Fatalf("encode error: %v", err)
 			}
@@ -345,7 +346,7 @@ func TestSpecRoundTrip(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			data, err := Encode(tt.value)
+			data, err := encodeReserved(tt.value)
 			if err != nil {
 				t.Fatalf("encode error: %v", err)
 			}

@@ -16,6 +16,12 @@ pub struct EncodeOptions {
     pub omit_null: bool,
     /// Sort object keys (always true since we use BTreeMap).
     pub deterministic: bool,
+    /// Allow encoding value kinds whose wire tags v1 reserves: TensorRef(0x21),
+    /// Image(0x22), Audio(0x23), Node(0x35), Edge(0x36), NodeBatch(0x37),
+    /// EdgeBatch(0x38). Off by default because every v1 decoder — including this
+    /// one — rejects those tags, so the output would be unreadable. Enable only
+    /// to reproduce pre-v1 (attic) bytes.
+    pub allow_reserved: bool,
 }
 
 /// Encode a value to Cowrie bytes.
@@ -157,8 +163,15 @@ fn encode_value(
             }
         }
         Value::Uint(u) => {
-            buf.push(tags::UINT64);
-            write_uvarint(buf, *u);
+            // Canonical rule (mirrors tools/cowrie_ref `number_domain`): a uint that
+            // fits in i64 MUST be written as Int. Emitting UINT64 here would produce
+            // bytes our own strict decoder rejects as ERR_NON_CANONICAL ("uint fits Int").
+            if *u <= i64::MAX as u64 {
+                encode_value(buf, &Value::Int(*u as i64), dict, opts)?;
+            } else {
+                buf.push(tags::UINT64);
+                write_uvarint(buf, *u);
+            }
         }
         Value::Float(f) => {
             buf.push(tags::FLOAT64);
@@ -267,12 +280,18 @@ fn encode_value(
         }
 
         Value::TensorRef(r) => {
+            if !opts.allow_reserved {
+                return Err(CowrieError::InvalidTag(tags::TENSOR_REF));
+            }
             buf.push(tags::TENSOR_REF);
             buf.push(r.store_id);
             write_uvarint(buf, r.key.len() as u64);
             buf.extend_from_slice(&r.key);
         }
         Value::Image(img) => {
+            if !opts.allow_reserved {
+                return Err(CowrieError::InvalidTag(tags::IMAGE));
+            }
             buf.push(tags::IMAGE);
             buf.push(img.format as u8);
             buf.extend_from_slice(&img.width.to_le_bytes());
@@ -281,6 +300,9 @@ fn encode_value(
             buf.extend_from_slice(&img.data);
         }
         Value::Audio(aud) => {
+            if !opts.allow_reserved {
+                return Err(CowrieError::InvalidTag(tags::AUDIO));
+            }
             buf.push(tags::AUDIO);
             buf.push(aud.encoding as u8);
             buf.extend_from_slice(&aud.sample_rate.to_le_bytes());
@@ -301,14 +323,23 @@ fn encode_value(
         }
         // Graph types
         Value::Node(node) => {
+            if !opts.allow_reserved {
+                return Err(CowrieError::InvalidTag(tags::NODE));
+            }
             buf.push(tags::NODE);
             encode_node_data(buf, node, dict, opts)?;
         }
         Value::Edge(edge) => {
+            if !opts.allow_reserved {
+                return Err(CowrieError::InvalidTag(tags::EDGE));
+            }
             buf.push(tags::EDGE);
             encode_edge_data(buf, edge, dict, opts)?;
         }
         Value::NodeBatch(batch) => {
+            if !opts.allow_reserved {
+                return Err(CowrieError::InvalidTag(tags::NODE_BATCH));
+            }
             buf.push(tags::NODE_BATCH);
             write_uvarint(buf, batch.nodes.len() as u64);
             for node in &batch.nodes {
@@ -316,6 +347,9 @@ fn encode_value(
             }
         }
         Value::EdgeBatch(batch) => {
+            if !opts.allow_reserved {
+                return Err(CowrieError::InvalidTag(tags::EDGE_BATCH));
+            }
             buf.push(tags::EDGE_BATCH);
             write_uvarint(buf, batch.edges.len() as u64);
             for edge in &batch.edges {

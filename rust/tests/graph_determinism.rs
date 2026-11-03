@@ -8,10 +8,24 @@
 //! drift in the wire format).
 
 use cowrie_rs::gen2::{
-    encode,
+    encode_with_options, EncodeOptions,
     types::{EdgeBatchData, EdgeData, NodeBatchData, NodeData, Value},
 };
 use std::collections::BTreeMap;
+
+/// Graph tags (0x35-0x38) are reserved in v1, so plain `encode` refuses them.
+/// These determinism tests exist to prove the retired bytes are still produced
+/// identically across languages, so they force the opt-in.
+fn encode_graph(v: &Value) -> Vec<u8> {
+    encode_with_options(
+        v,
+        &EncodeOptions {
+            allow_reserved: true,
+            ..Default::default()
+        },
+    )
+    .expect("encode graph value")
+}
 
 // ---------------------------------------------------------------------------
 // Go canonical hex (ground truth)
@@ -64,7 +78,7 @@ fn make_edge() -> Value {
 
 #[test]
 fn graph_determinism_node_matches_go() {
-    let encoded = encode(&make_node()).expect("encode NODE");
+    let encoded = encode_graph(&make_node());
     let got = hex(&encoded);
     assert_eq!(
         got, GO_NODE,
@@ -75,7 +89,7 @@ fn graph_determinism_node_matches_go() {
 
 #[test]
 fn graph_determinism_edge_matches_go() {
-    let encoded = encode(&make_edge()).expect("encode EDGE");
+    let encoded = encode_graph(&make_edge());
     let got = hex(&encoded);
     assert_eq!(
         got, GO_EDGE,
@@ -91,7 +105,7 @@ fn graph_determinism_node_batch_matches_go() {
         _ => unreachable!(),
     };
     let batch = Value::NodeBatch(NodeBatchData { nodes: vec![node] });
-    let encoded = encode(&batch).expect("encode NODE_BATCH");
+    let encoded = encode_graph(&batch);
     let got = hex(&encoded);
     assert_eq!(
         got, GO_NODE_BATCH,
@@ -107,7 +121,7 @@ fn graph_determinism_edge_batch_matches_go() {
         _ => unreachable!(),
     };
     let batch = Value::EdgeBatch(EdgeBatchData { edges: vec![edge] });
-    let encoded = encode(&batch).expect("encode EDGE_BATCH");
+    let encoded = encode_graph(&batch);
     let got = hex(&encoded);
     assert_eq!(
         got, GO_EDGE_BATCH,

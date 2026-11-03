@@ -5,10 +5,23 @@ use std::collections::BTreeMap;
 use cowrie_rs::gen2::decode::DecodeOptions;
 use cowrie_rs::gen2::types::*;
 use cowrie_rs::gen2::{
-    decode, decode_framed, decode_with_options, encode, encode_framed, encode_with_options,
+    decode, decode_framed, decode_strict, decode_with_options, encode, encode_framed, encode_with_options,
     from_json, read_frame, schema_fingerprint64, to_json, to_json_pretty, write_frame, Compression,
     CowrieError, DType, EncodeOptions, MasterWriterOptions, TensorData, Value,
 };
+
+/// Encode a value whose wire tag v1 reserves. Plain `encode` refuses these by design;
+/// the reserved-tag tests force the bytes so they can prove the decoder rejects them.
+fn encode_reserved(v: &Value) -> Vec<u8> {
+    encode_with_options(
+        v,
+        &EncodeOptions {
+            allow_reserved: true,
+            ..Default::default()
+        },
+    )
+    .expect("encode reserved kind")
+}
 
 // ============================================================
 // Gen2 encode/decode roundtrip — all value types
@@ -81,12 +94,27 @@ fn roundtrip_int_large() {
 
 #[test]
 fn roundtrip_uint() {
-    for u in [0u64, 1, 255, 65535, u64::MAX] {
-        let v = Value::Uint(u);
-        let enc = encode(&v).unwrap();
-        let dec = decode(&enc).unwrap();
-        assert_eq!(dec, Value::Uint(u), "UINT64 failed for {}", u);
+    // Canonical rule (mirrors tools/cowrie_ref number_domain): a uint that fits in i64
+    // is written as Int on the wire, so it comes back as Int. Anything else would emit
+    // bytes the strict decoder rejects ("uint fits Int").
+    for u in [0u64, 1, 255, 65535, i64::MAX as u64] {
+        let enc = encode(&Value::Uint(u)).unwrap();
+        assert_eq!(
+            decode(&enc).unwrap(),
+            Value::Int(u as i64),
+            "Uint({}) must canonicalise to Int",
+            u
+        );
+        assert!(
+            decode_strict(&enc).is_ok(),
+            "strict decoder must accept our own Uint({}) bytes",
+            u
+        );
     }
+    // Only values above i64::MAX genuinely need the Uint arm, and those stay Uint.
+    let enc = encode(&Value::Uint(u64::MAX)).unwrap();
+    assert_eq!(decode(&enc).unwrap(), Value::Uint(u64::MAX));
+    assert!(decode_strict(&enc).is_ok());
 }
 
 #[test]
@@ -337,7 +365,7 @@ fn reserved_tensor_ref_rejected() {
         store_id: 3,
         key: vec![0xDE, 0xAD, 0xBE, 0xEF],
     });
-    let enc = encode(&v).unwrap();
+    let enc = encode_reserved(&v);
     assert!(matches!(decode(&enc), Err(CowrieError::InvalidTag(0x21))));
 }
 
@@ -361,7 +389,7 @@ fn reserved_image_rejected() {
             height: 480,
             data: vec![0xFF; 100],
         });
-        let enc = encode(&v).unwrap();
+        let enc = encode_reserved(&v);
         assert!(
             matches!(decode(&enc), Err(CowrieError::InvalidTag(0x22))),
             "image format {:?} must reject",
@@ -385,7 +413,7 @@ fn reserved_audio_rejected() {
             channels: 2,
             data: vec![0x80; 200],
         });
-        let enc = encode(&v).unwrap();
+        let enc = encode_reserved(&v);
         assert!(
             matches!(decode(&enc), Err(CowrieError::InvalidTag(0x23))),
             "audio encoding {:?} must reject",
@@ -425,7 +453,7 @@ fn audio_decode_channels_zero_rejected() {
         channels: 0,
         data: vec![0, 0],
     });
-    let enc = encode(&v).unwrap();
+    let enc = encode_reserved(&v);
     assert!(matches!(decode(&enc), Err(CowrieError::InvalidTag(0x23))));
 }
 
@@ -473,7 +501,7 @@ fn reserved_node_rejected() {
         labels: vec!["Person".to_string(), "Active".to_string()],
         props,
     });
-    let enc = encode(&v).unwrap();
+    let enc = encode_reserved(&v);
     assert!(matches!(decode(&enc), Err(CowrieError::InvalidTag(0x35))));
 }
 
@@ -487,7 +515,7 @@ fn reserved_edge_rejected() {
         edge_type: "KNOWS".to_string(),
         props,
     });
-    let enc = encode(&v).unwrap();
+    let enc = encode_reserved(&v);
     assert!(matches!(decode(&enc), Err(CowrieError::InvalidTag(0x36))));
 }
 
@@ -502,7 +530,7 @@ fn reserved_node_batch_rejected() {
         }),
     ];
     let v = Value::NodeBatch(NodeBatchData { nodes });
-    let enc = encode(&v).unwrap();
+    let enc = encode_reserved(&v);
     assert!(matches!(decode(&enc), Err(CowrieError::InvalidTag(0x37))));
 }
 
@@ -517,7 +545,7 @@ fn reserved_edge_batch_rejected() {
         }),
     ];
     let v = Value::EdgeBatch(EdgeBatchData { edges });
-    let enc = encode(&v).unwrap();
+    let enc = encode_reserved(&v);
     assert!(matches!(decode(&enc), Err(CowrieError::InvalidTag(0x38))));
 }
 
@@ -558,10 +586,11 @@ fn encode_omit_null_in_node_props() {
     });
     let opts = EncodeOptions {
         omit_null: true,
+        allow_reserved: true,
         ..Default::default()
     };
     let with_omit = encode_with_options(&v, &opts).unwrap();
-    let without_omit = encode(&v).unwrap();
+    let without_omit = encode_reserved(&v);
     assert!(
         with_omit.len() < without_omit.len(),
         "omit_null should drop the null node prop"

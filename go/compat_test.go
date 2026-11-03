@@ -140,7 +140,7 @@ func TestGenerateCrossLanguageFixtures(t *testing.T) {
 	}
 
 	for name, v := range fixtures {
-		encoded, err := Encode(v)
+		encoded, err := encodeReserved(v)
 		if err != nil {
 			t.Fatalf("encode %s: %v", name, err)
 		}
@@ -184,7 +184,7 @@ func TestGoToCCompatibility(t *testing.T) {
 
 	for _, vec := range vectors {
 		name, v := vec.name, vec.val
-		encoded, err := Encode(v)
+		encoded, err := encodeReserved(v)
 		if err != nil {
 			t.Fatalf("failed to encode %s: %v", name, err)
 		}

@@ -129,7 +129,7 @@ func TestEncodeAny_AllBranches(t *testing.T) {
 	})
 	// Node(0x35) is reserved on decode (SPEC-v1 §2.3); this still exercises every
 	// encodeAny property branch, then asserts the decoder rejects the stream.
-	data, err := Encode(nv)
+	data, err := encodeReserved(nv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +149,7 @@ func TestEncodeAny_NestedMaps(t *testing.T) {
 			map[string]any{"k": "v"},
 		},
 	})
-	data, err := Encode(nv)
+	data, err := encodeReserved(nv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func TestEncodeAny_FixArrayFixMap(t *testing.T) {
 		"small_arr": []any{1, 2, 3},
 		"small_map": map[string]any{"a": 1, "b": 2},
 	})
-	data, err := Encode(nv)
+	data, err := encodeReserved(nv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +178,7 @@ func TestEncodeAny_FixArrayFixMap(t *testing.T) {
 	nv2 := Node("n4", []string{"Test"}, map[string]any{
 		"big_arr": largeArr,
 	})
-	data2, err := Encode(nv2)
+	data2, err := encodeReserved(nv2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -353,7 +353,7 @@ func TestGraphPropEncodingDeterministic(t *testing.T) {
 
 	var prev []byte
 	for i := 0; i < 20; i++ {
-		data, err := Encode(nodeVal)
+		data, err := encodeReserved(nodeVal)
 		if err != nil {
 			t.Fatalf("Encode iteration %d: %v", i, err)
 		}
@@ -372,7 +372,7 @@ func TestGraphPropEncodingDeterministic(t *testing.T) {
 
 	prev = nil
 	for i := 0; i < 20; i++ {
-		data, err := Encode(edgeVal)
+		data, err := encodeReserved(edgeVal)
 		if err != nil {
 			t.Fatalf("Encode edge iteration %d: %v", i, err)
 		}
@@ -387,7 +387,7 @@ func TestGraphPropEncodingDeterministic(t *testing.T) {
 	// Decode back and check that the dictionary ordering matches sorted prop keys.
 	// We confirm "age" (idx 0) appears before "name" (idx 1) in the node encoding
 	// by checking the dictionary emitted in the header (first dict entry = "age").
-	nodeData, _ := Encode(nodeVal)
+	nodeData, _ := encodeReserved(nodeVal)
 	// Header (§2.2): Magic(4 COWR) + Version(1) + Flags(1) + DictLen varint + dict entries
 	// DictLen should be 2 (two unique keys). First key after the count should be "age".
 	// Skip 6 header bytes, then read dict count varint.

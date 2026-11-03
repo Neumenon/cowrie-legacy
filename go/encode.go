@@ -2,6 +2,7 @@ package cowrie
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -19,6 +20,14 @@ var bufferPool = sync.Pool{
 // maxPoolBufSize is the cap above which buffers are not returned to the pool.
 const maxPoolBufSize = 1 << 20 // 1MB
 
+// ErrReservedTag is returned by the encoder for value kinds whose wire tags v1
+// reserves (SPEC-v1 §2.3): TensorRef(0x21), Image(0x22), Audio(0x23), Node(0x35),
+// Edge(0x36), NodeBatch(0x37), EdgeBatch(0x38). Decoders reject those tags, so
+// encoding them by default would produce a message no conforming v1 reader —
+// including this package's own Decode — can read. Set EncodeOptions.AllowReserved
+// to emit pre-v1 (attic) bytes anyway.
+var ErrReservedTag = errors.New("cowrie: value uses a tag reserved in v1")
+
 // putBuf returns a buffer to the pool if it's not oversized.
 func putBuf(buf *buffer) {
 	if cap(buf.data) <= maxPoolBufSize {
@@ -28,10 +37,15 @@ func putBuf(buf *buffer) {
 
 // Encode encodes a value to Cowrie v2 binary format.
 func Encode(v *Value) ([]byte, error) {
+	return encodeTop(v, false)
+}
+
+// encodeTop is the shared entry point; allowReserved selects the tag policy.
+func encodeTop(v *Value, allowReserved bool) ([]byte, error) {
 	buf := bufferPool.Get().(*buffer)
 	buf.data = buf.data[:0] // reset length, keep capacity
 
-	if err := encode(buf, v); err != nil {
+	if err := encode(buf, v, allowReserved); err != nil {
 		putBuf(buf)
 		return nil, err
 	}
@@ -48,7 +62,7 @@ func Encode(v *Value) ([]byte, error) {
 // Useful for avoiding allocations when the caller manages buffers.
 func EncodeAppend(dst []byte, v *Value) ([]byte, error) {
 	buf := buffer{data: dst}
-	if err := encode(&buf, v); err != nil {
+	if err := encode(&buf, v, false); err != nil {
 		return nil, err
 	}
 	return buf.data, nil
@@ -119,6 +133,11 @@ func zigzagEncode(n int64) uint64 {
 type dict struct {
 	keys   []string
 	lookup map[string]int
+
+	// allowReserved carries the encoder's tag policy down the recursive walk. The
+	// dictionary is the one structure already threaded through every encode path,
+	// so the flag rides here rather than widening encodeValue/encodeAny signatures.
+	allowReserved bool
 }
 
 func newDict() *dict {
@@ -212,9 +231,10 @@ func collectKeysFromAnyValue(v any, d *dict) {
 }
 
 // encode writes the complete Cowrie v2 format to the buffer.
-func encode(buf *buffer, v *Value) error {
+func encode(buf *buffer, v *Value, allowReserved bool) error {
 	// Build dictionary (global byte-sorted, §2.4)
 	d := newDict()
+	d.allowReserved = allowReserved
 	collectKeys(v, d)
 	d.sortGlobal()
 
@@ -268,6 +288,19 @@ func encodeValue(buf *buffer, v *Value, d *dict) error {
 		buf.writeUvarint(zigzagEncode(v.int64Val))
 
 	case TypeUint64:
+		// Canonical rule (mirrors tools/cowrie_ref number_domain): a uint that fits in
+		// i64 MUST be written as Int, otherwise we emit bytes our own strict decoder
+		// rejects as "uint fits Int".
+		if v.uint64Val <= math.MaxInt64 {
+			i := int64(v.uint64Val)
+			if i <= 127 {
+				buf.writeByte(byte(TagFixintBase + i))
+			} else {
+				buf.writeByte(TagInt64)
+				buf.writeUvarint(zigzagEncode(i))
+			}
+			return nil
+		}
 		buf.writeByte(TagUint64)
 		buf.writeUvarint(v.uint64Val)
 
@@ -372,12 +405,18 @@ func encodeValue(buf *buffer, v *Value, d *dict) error {
 		buf.write(v.tensorVal.Data)
 
 	case TypeTensorRef:
+		if !d.allowReserved {
+			return ErrReservedTag
+		}
 		buf.writeByte(TagTensorRef)
 		buf.writeByte(v.tensorRefVal.StoreID)
 		buf.writeUvarint(uint64(len(v.tensorRefVal.Key)))
 		buf.write(v.tensorRefVal.Key)
 
 	case TypeImage:
+		if !d.allowReserved {
+			return ErrReservedTag
+		}
 		buf.writeByte(TagImage)
 		buf.writeByte(byte(v.imageVal.Format))
 		buf.writeUint16LE(v.imageVal.Width)
@@ -386,6 +425,9 @@ func encodeValue(buf *buffer, v *Value, d *dict) error {
 		buf.write(v.imageVal.Data)
 
 	case TypeAudio:
+		if !d.allowReserved {
+			return ErrReservedTag
+		}
 		buf.writeByte(TagAudio)
 		buf.writeByte(byte(v.audioVal.Encoding))
 		buf.writeUint32LE(v.audioVal.SampleRate)
@@ -394,6 +436,9 @@ func encodeValue(buf *buffer, v *Value, d *dict) error {
 		buf.write(v.audioVal.Data)
 
 	case TypeNode:
+		if !d.allowReserved {
+			return ErrReservedTag
+		}
 		buf.writeByte(TagNode)
 		// ID
 		buf.writeString(v.nodeVal.ID)
@@ -412,6 +457,9 @@ func encodeValue(buf *buffer, v *Value, d *dict) error {
 		}
 
 	case TypeEdge:
+		if !d.allowReserved {
+			return ErrReservedTag
+		}
 		buf.writeByte(TagEdge)
 		// Source and destination IDs
 		buf.writeString(v.edgeVal.From)
@@ -428,6 +476,9 @@ func encodeValue(buf *buffer, v *Value, d *dict) error {
 		}
 
 	case TypeNodeBatch:
+		if !d.allowReserved {
+			return ErrReservedTag
+		}
 		buf.writeByte(TagNodeBatch)
 		buf.writeUvarint(uint64(len(v.nodeBatchVal.Nodes)))
 		for _, node := range v.nodeBatchVal.Nodes {
@@ -437,6 +488,9 @@ func encodeValue(buf *buffer, v *Value, d *dict) error {
 		}
 
 	case TypeEdgeBatch:
+		if !d.allowReserved {
+			return ErrReservedTag
+		}
 		buf.writeByte(TagEdgeBatch)
 		buf.writeUvarint(uint64(len(v.edgeBatchVal.Edges)))
 		for _, edge := range v.edgeBatchVal.Edges {
@@ -635,6 +689,12 @@ type EncodeOptions struct {
 	// OmitNull excludes null values from encoded objects.
 	// Useful for sparse data and reducing payload size.
 	OmitNull bool
+
+	// AllowReserved permits encoding value kinds whose wire tags v1 reserves
+	// (TensorRef, Image, Audio, Node, Edge, NodeBatch, EdgeBatch). Off by default
+	// because every v1 decoder rejects those tags; enable only to reproduce
+	// pre-v1 (attic) bytes.
+	AllowReserved bool
 }
 
 // EncodeWithOptions encodes a value with explicit options.
@@ -645,7 +705,7 @@ func EncodeWithOptions(v *Value, opts EncodeOptions) ([]byte, error) {
 	if opts.Deterministic {
 		v = canonicalize(v)
 	}
-	return Encode(v)
+	return encodeTop(v, opts.AllowReserved)
 }
 
 // omitNulls returns a copy of v with all null values removed from objects.
