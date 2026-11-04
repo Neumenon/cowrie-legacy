@@ -149,10 +149,25 @@ def main() -> int:
 
     total = 0
     violations: list[tuple[str, str, str]] = []
+    controls = 0
     stats = {k: {"REJECT": 0, "ACCEPT": 0, "NORMALIZE": 0} for k in IMPLS}
     stats["python"] = {"REJECT": 0, "ACCEPT": 0, "NORMALIZE": 0}
 
     for name, base in bases:
+        # CONTROL (§5.3 control precedence): the unmutated canonical encoding must be accepted,
+        # and echoed unchanged, by every implementation. A decoder that rejects everything would
+        # otherwise score perfectly on the mutation half of this gate.
+        controls += 1
+        try:
+            v0 = ref.decode(base, strict=True)
+            if ref.encode(v0) != base:
+                violations.append((name, "control/canonical", "python"))
+        except Exception:
+            violations.append((name, "control/canonical", "python"))
+        for lang, (cmd, cwd) in IMPLS.items():
+            beh, code = probe(cmd, base, cwd)
+            if beh != "ACCEPT":
+                violations.append((name, "control/canonical", lang))
         for label, mutant in mutations(base, per_base, rng):
             total += 1
             # python reference, in process
@@ -174,9 +189,9 @@ def main() -> int:
     for lang, s in stats.items():
         print(f"{lang:10}{s['REJECT']:>9}{s['ACCEPT']:>9}{s['NORMALIZE']:>11}")
 
-    print(f"\n{total} mutants tested")
+    print(f"\n{total} mutants tested, {controls} canonical controls")
     if violations:
-        print(f"\n❌ {len(violations)} canonicality violations (strict decode accepted non-canonical bytes):")
+        print(f"\n❌ {len(violations)} canonicality failures (a control that rejects canonical input, or\n   a mutant accepted with different bytes — both are defects):")
         seen = set()
         for name, label, lang in violations[:20]:
             key = (name, label)

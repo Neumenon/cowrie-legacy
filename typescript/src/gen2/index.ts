@@ -1380,6 +1380,9 @@ class Decoder {
               throw new CowrieError(ERR_NON_CANONICAL, 'object fields not in ascending dictIdx');
             }
             lastIdx = fieldId;
+            if (this.strict) {
+              this.dictUsed[fieldId] = true;
+            }
             const key = this.dict[fieldId];
             members[key] = this.decodeValue();
           }
