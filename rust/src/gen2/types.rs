@@ -27,6 +27,93 @@ pub enum CowrieError {
     UnsupportedCompression(u8),
 }
 
+impl Value {
+    /// The canonical form of an integer (§5.3 number domain): Int if it fits, Uint if it fits and
+    /// is positive, otherwise a BigInt with minimal two's-complement bytes. There is exactly one
+    /// Value for each integer, so this cannot build something the strict decoder would reject.
+    pub fn integer(v: i128) -> Value {
+        if v >= i64::MIN as i128 && v <= i64::MAX as i128 {
+            Value::Int(v as i64)
+        } else if v > 0 && v <= u64::MAX as i128 {
+            Value::Uint(v as u64)
+        } else {
+            Value::BigInt(int_to_minimal_le(v))
+        }
+    }
+
+    /// A Decimal128 from a scale and a coefficient, in the wire form a decoder produces.
+    ///
+    /// The coefficient is always 16 little-endian bytes (§2.3). The value is not reduced here:
+    /// §5.3 lowest terms is applied by the encoder, so passing (2, 150) is not an error — it
+    /// encodes identically to (1, 15), which is the point of canonical form.
+    pub fn decimal(scale: i64, coefficient: i128) -> Value {
+        let mut wire = Vec::with_capacity(17);
+        write_svarint(&mut wire, scale);
+        wire.extend_from_slice(&coefficient.to_le_bytes());
+        Value::Decimal(wire)
+    }
+
+    /// Read a Decimal128 back as (scale, coefficient), or None if this value is not one.
+    pub fn decimal_parts(&self) -> Option<(i64, i128)> {
+        let Value::Decimal(wire) = self else {
+            return None;
+        };
+        let (scale, used) = read_svarint(wire)?;
+        if wire.len() != used + 16 {
+            return None;
+        }
+        let mut coef = [0u8; 16];
+        coef.copy_from_slice(&wire[used..]);
+        Some((scale, i128::from_le_bytes(coef)))
+    }
+}
+
+/// Minimal little-endian two's complement: no redundant leading 0x00 / 0xFF bytes.
+fn int_to_minimal_le(v: i128) -> Vec<u8> {
+    let b = v.to_le_bytes();
+    let mut n = 16;
+    while n > 1 {
+        let last = b[n - 1];
+        let prev = b[n - 2];
+        let redundant = (last == 0x00 && prev & 0x80 == 0) || (last == 0xFF && prev & 0x80 != 0);
+        if !redundant {
+            break;
+        }
+        n -= 1;
+    }
+    b[..n].to_vec()
+}
+
+fn write_svarint(out: &mut Vec<u8>, v: i64) {
+    let mut z = ((v << 1) ^ (v >> 63)) as u64;
+    loop {
+        let b = (z & 0x7F) as u8;
+        z >>= 7;
+        if z == 0 {
+            out.push(b);
+            return;
+        }
+        out.push(b | 0x80);
+    }
+}
+
+fn read_svarint(data: &[u8]) -> Option<(i64, usize)> {
+    let mut raw: u64 = 0;
+    let mut shift = 0u32;
+    for (i, b) in data.iter().enumerate() {
+        raw |= ((b & 0x7F) as u64) << shift;
+        if b & 0x80 == 0 {
+            let v = ((raw >> 1) as i64) ^ -((raw & 1) as i64);
+            return Some((v, i + 1));
+        }
+        shift += 7;
+        if shift >= 64 {
+            return None;
+        }
+    }
+    None
+}
+
 impl fmt::Display for CowrieError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -795,5 +882,79 @@ mod tests {
 
         assert_eq!(obj.get("name").and_then(|v| v.as_str()), Some("test"));
         assert_eq!(obj.get("count").and_then(|v| v.as_i64()), Some(42));
+    }
+}
+
+#[cfg(test)]
+mod ctor_tests {
+    use super::*;
+
+    #[test]
+    fn integer_picks_the_smallest_form() {
+        assert_eq!(Value::integer(0), Value::Int(0));
+        assert_eq!(Value::integer(127), Value::Int(127));
+        assert_eq!(Value::integer(-1), Value::Int(-1));
+        assert_eq!(Value::integer(i64::MIN as i128), Value::Int(i64::MIN));
+        // 2^63 does not fit i64 but fits u64
+        assert_eq!(Value::integer(1i128 << 63), Value::Uint(1u64 << 63));
+        assert_eq!(Value::integer(u64::MAX as i128), Value::Uint(u64::MAX));
+        // 2^64 fits neither, so it is a BigInt with minimal bytes
+        assert_eq!(
+            Value::integer(1i128 << 64),
+            Value::BigInt(vec![0, 0, 0, 0, 0, 0, 0, 0, 1])
+        );
+    }
+
+    #[test]
+    fn integer_is_strict_canonical() {
+        for v in [
+            0i128,
+            127,
+            128,
+            -1,
+            i64::MIN as i128,
+            1i128 << 63,
+            u64::MAX as i128,
+            1i128 << 64,
+            -(1i128 << 64),
+            i128::MAX,
+            i128::MIN,
+        ] {
+            let val = Value::integer(v);
+            let enc = crate::gen2::encode(&val).expect("encode");
+            let dec = crate::gen2::decode_strict(&enc)
+                .unwrap_or_else(|e| panic!("strict decode of {}: {:?}", v, e));
+            assert_eq!(crate::gen2::encode(&dec).unwrap(), enc, "not canonical for {}", v);
+        }
+    }
+
+    #[test]
+    fn decimal_round_trips_and_encodes_reduced() {
+        let d = Value::decimal(2, 150);
+        assert_eq!(d.decimal_parts(), Some((2, 150)));
+        // §5.3: the encoder writes lowest terms, so (2, 150) and (1, 15) are the same bytes
+        let a = crate::gen2::encode(&d).unwrap();
+        let b = crate::gen2::encode(&Value::decimal(1, 15)).unwrap();
+        assert_eq!(a, b);
+        let dec = crate::gen2::decode_strict(&a).expect("strict");
+        assert_eq!(dec.decimal_parts(), Some((1, 15)));
+    }
+
+    #[test]
+    fn decimal_handles_negative_and_zero() {
+        let d = Value::decimal(-2, -5);
+        assert_eq!(d.decimal_parts(), Some((-2, -5)));
+        let enc = crate::gen2::encode(&d).unwrap();
+        let dec = crate::gen2::decode_strict(&enc).expect("strict");
+        assert_eq!(crate::gen2::encode(&dec).unwrap(), enc);
+
+        let z = Value::decimal(7, 0);
+        assert_eq!(z.decimal_parts(), Some((7, 0)));
+        // zero normalises to scale 0
+        let enc = crate::gen2::encode(&z).unwrap();
+        assert_eq!(
+            crate::gen2::decode_strict(&enc).unwrap().decimal_parts(),
+            Some((0, 0))
+        );
     }
 }

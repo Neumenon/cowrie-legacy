@@ -235,14 +235,8 @@ fn main() {
 fn cases_mode() {
     use std::collections::BTreeMap;
 
-    let dec = |scale_zigzag: u8, coef0: u8| -> Value {
-        // the wire form a decoder produces: varint(zigzag(scale)) + 16-byte LE coefficient
-        let mut v = vec![scale_zigzag];
-        let mut c = [0u8; 16];
-        c[0] = coef0;
-        v.extend_from_slice(&c);
-        Value::Decimal(v)
-    };
+    // The typed constructors exist so this file does not have to hand-build wire bytes.
+    let _ = &Value::decimal; // (kept for readers: decimal(scale, coefficient))
 
     let mut uuid = [0u8; 16];
     for (i, b) in uuid.iter_mut().enumerate() {
@@ -260,11 +254,11 @@ fn cases_mode() {
         ("int_neg17", Value::Int(-17)),
         ("int_127", Value::Int(127)),
         ("uint_42", Value::Uint(42)),
-        ("uint_2p63", Value::Uint(1 << 63)),
-        ("bigint_1", Value::BigInt(vec![1])),
-        ("bigint_2p64", Value::BigInt(vec![0, 0, 0, 0, 0, 0, 0, 0, 1])),
-        ("dec_2_150", dec(4, 150)), // zigzag(2) = 4
-        ("dec_2_42", dec(4, 42)),
+        ("uint_2p63", Value::Uint(1u64 << 63)),
+        ("bigint_1", Value::integer(1)),
+        ("bigint_2p64", Value::integer(1i128 << 64)),
+        ("dec_2_150", Value::decimal(2, 150)),
+        ("dec_2_42", Value::decimal(2, 42)),
         ("float_nan", Value::Float(f64::NAN)),
         ("float_negzero", Value::Float(-0.0)),
         ("str_unicode", Value::String("héllo".to_string())),
