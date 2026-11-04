@@ -319,17 +319,50 @@ Being precise about this saves everyone time:
 
 ## 10. Measured
 
-Compiled Go on an Apple M3 Ultra, same 54 KB payload (binary blob + prompt + f32 embedding), same
-process, `go test -bench`:
+Compiled Go, Apple M3 Ultra, one 54 KB payload (50 KB binary blob + a prompt + a 768-element f32
+embedding), same process. Three runs, medians; the host was also running other work (load ≈ 5), so
+the absolute times are pessimistic — the ratios are the signal.
 
-| | Cowrie | MessagePack v5 | JSON |
-|---|---|---|---|
-| encode | **6,799 ns** | 15,625 ns | 61,792 ns |
-| decode (strict) | **6,274 ns** | 21,312 ns | 152,773 ns |
-| size | **54,439 B** | 55,171 B | 75,167 B |
-| allocs (decode) | 14 | 780 | 1,574 |
+The MessagePack column is the comparison a MessagePack user would actually write. The *packed*
+column carries the same bytes Cowrie carries, so it isolates the format rather than the encoding
+choice:
 
-**2.3× faster encode, 3.4× faster decode, 1.3% smaller than MessagePack; 9× / 24× / 1.38× vs JSON.**
+| | Cowrie | MessagePack (float array) | MessagePack (packed bytes) | JSON |
+|---|---|---|---|---|
+| encode | 7,124 ns | 15,531 ns | **5,692 ns** | 64,319 ns |
+| decode (strict) | 6,579 ns | 21,387 ns | 6,951 ns | 157,045 ns |
+| size | 54,439 B | 55,171 B | **54,448 B** | 75,167 B |
+| allocs (encode) | 12 | 4 | 3 | 12 |
+| allocs (decode) | 15 | 780 | 23 | 1,574 |
+
+Read it honestly.
+
+- **Against an element-wise float array, the tensor type wins decisively.** 2.2× faster to encode,
+  3.3× faster to decode, and 780 allocations collapse to 15. That is the mistake MessagePack makes
+  on numeric payloads — every float gets a type tag and a boxed value — and Cowrie's type system
+  makes it unrepresentable.
+- **Against a hand-packed blob, the speed advantage is gone.** MessagePack encodes 25% faster
+  (5,692 vs 7,124 ns), Cowrie decodes 5% faster, and the sizes differ by nine bytes. If you are
+  willing to pack your own bytes and carry your own dtype and shape, MessagePack serves you at the
+  same cost. Cowrie's claim is that you should not have to.
+- **Identity is not in this table.** None of these timings include hashing, and none of the three
+  alternatives gives you a byte string two services are guaranteed to agree on.
+
+### What the dictionary buys
+
+The header codes every object key once and references it by index. Measured with the reference
+encoder on four real shapes:
+
+| shape | encoded | dictionary | inlining keys would add | net |
+|---|---:|---:|---:|---:|
+| one small object, 3 keys | 1,062 B | 23 B | 19 B | −4 B (−0.4%) |
+| agent trace, 50 events × 5 keys | 1,328 B | 20 B | 700 B | **+680 B (+51%)** |
+| dataset shard, 500 rows × 6 keys | 11,022 B | 49 B | 21,000 B | **+20,951 B (+190%)** |
+| wide unique keys, 200 objects × 600 keys | 7,553 B | 5,672 B | 5,070 B | −602 B (−8%) |
+
+The dictionary costs four bytes on a lone small object, returns half the message on an agent trace,
+and nearly triples a dataset shard. It is a loss only when every key is distinct — and then it is a
+loss of 8%, not a doubling.
 
 Rust, borrowed (zero-copy) decoder vs owned decoder on a 3.2 KB agent-trace frame:
 
@@ -342,11 +375,15 @@ Rust, borrowed (zero-copy) decoder vs owned decoder on a 3.2 KB agent-trace fram
 
 Honest ledger — where it loses:
 
-- **MessagePack allocates less on encode** (4 vs 12). Cowrie is faster there, not leaner.
+- **MessagePack allocates less on encode** (4 vs 12; 3 packed). Cowrie is faster against the
+  float-array form, not leaner.
 - **The Python reference is 12–24× slower than MessagePack.** It is the oracle, deliberately dumb.
-  Throughput comes from Go/Rust.
-- **Against zstd'd competitors, size is a wash.** The archive profile (whole dataset as one canonical
-  array, dictionary coded once) gets to 1.25% of JSON vs MessagePack's 1.42% — inches, not orders.
+  Throughput comes from Go and Rust.
+- **Against zstd'd competitors, size is a wash.** The archive profile (whole dataset as one
+  canonical array, dictionary coded once) reaches 1.25% of JSON against MessagePack's 1.42% —
+  inches, not orders.
+- **Benchmarks are one payload.** These numbers say nothing about small messages, deep nesting,
+  mobile CPUs, or the cost of hashing, which none of them include.
 
 ---
 
