@@ -203,7 +203,7 @@ func (t Type) String() string {
 // Decimal128 represents a 128-bit decimal number.
 // Value = Coef * 10^(-Scale)
 type Decimal128 struct {
-	Scale int32    // SPEC scale is an int64 svarint; int32 covers the decimal domain (e.g. |scale|>127)
+	Scale int64    // SPEC §2.3: scale is an int64 svarint. Anything narrower truncates silently.
 	Coef  [16]byte // Two's complement little-endian (matches the §2.3 wire form)
 }
 

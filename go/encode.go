@@ -794,7 +794,7 @@ func sortMembers(members []Member) {
 
 // decimalCanonical reduces a Decimal128 to lowest terms (§5.3): factors of ten move from the
 // coefficient into the scale, and a zero coefficient collapses to scale 0.
-func decimalCanonical(scale int32, coef [16]byte) (int32, [16]byte) {
+func decimalCanonical(scale int64, coef [16]byte) (int64, [16]byte) {
 	c := bigIntFromLE(coef[:])
 	if c.Sign() == 0 {
 		return 0, [16]byte{}
@@ -859,7 +859,7 @@ func writeUintInto(buf *buffer, u uint64) {
 }
 
 // writeDecimalInto writes a Decimal128 in lowest terms (§5.3), scale as an SVARINT (§2.3).
-func writeDecimalInto(buf *buffer, scale int32, coef [16]byte) {
+func writeDecimalInto(buf *buffer, scale int64, coef [16]byte) {
 	scale, coef = decimalCanonical(scale, coef)
 	buf.writeByte(TagDecimal128)
 	buf.writeUvarint(zigzagEncode(int64(scale)))

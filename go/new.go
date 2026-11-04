@@ -33,7 +33,7 @@ func Float64(f float64) *Value {
 // LITTLE-ENDIAN, two's complement. 12345 is [0x39, 0x30, 0, ...], not [..., 0x30, 0x39] — the
 // argument is not a host-order integer. A coefficient divisible by 10 is not canonical (§5.3);
 // normalize it into a smaller scale before encoding, or a strict decoder will reject it.
-func NewDecimal128(scale int32, coef [16]byte) *Value {
+func NewDecimal128(scale int64, coef [16]byte) *Value {
 	return &Value{typ: TypeDecimal128, decimal128: Decimal128{Scale: scale, Coef: coef}}
 }
 

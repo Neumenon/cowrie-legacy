@@ -54,3 +54,9 @@ tools/dist/
 typescript/*.tgz
 rust/target/
 go/cowrie
+
+# Fuzzing: corpora and generated artifacts are regenerable (the bugs they found are pinned in
+# go/fuzz_findings_test.go, testdata/v1_negative.json and rust/src/gen1/mod.rs).
+rust/fuzz/corpus/
+rust/fuzz/artifacts/
+rust/fuzz/target/

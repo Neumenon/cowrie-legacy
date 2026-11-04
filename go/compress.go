@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 
 	"github.com/klauspost/compress/zstd"
@@ -141,7 +142,7 @@ func DecodeFramedWithLimitAndOptions(data []byte, maxDecompressedSize int, opts 
 	case CompressionZstd:
 		decompressed, err = decompressZstd(compressed, maxDecompressedSize)
 	default:
-		return nil, ErrInvalidTag
+		return nil, fmt.Errorf("%w: compression byte 0x%02x", ErrUnsupportedCompression, compByte)
 	}
 
 	if err != nil {

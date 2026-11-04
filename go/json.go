@@ -1126,7 +1126,7 @@ func formatDecimal128(d Decimal128) string {
 	// Apply scale
 	if d.Scale <= 0 {
 		// No decimal point needed, or append zeros
-		for i := int32(0); i > d.Scale; i-- {
+		for i := int64(0); i > d.Scale; i-- {
 			s += "0"
 		}
 		if neg && s != "0" {

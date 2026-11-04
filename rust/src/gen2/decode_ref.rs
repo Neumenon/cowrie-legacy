@@ -155,7 +155,10 @@ impl<'a> ReaderRef<'a> {
         if version != VERSION {
             return Err(CowrieError::InvalidVersion(version));
         }
-        let _flags = self.read_byte()?;
+        let comp = self.read_byte()?;
+        if comp != 0 {
+            return Err(CowrieError::UnsupportedCompression(comp));
+        }
 
         let dict_len = self.read_uvarint()? as usize;
         if dict_len > self.opts.max_dict_len {

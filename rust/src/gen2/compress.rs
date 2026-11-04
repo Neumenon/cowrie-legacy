@@ -150,7 +150,7 @@ fn decode_framed_inner(data: &[u8], max_size: usize, strict: bool) -> Result<Val
     let decompressed = match comp_type {
         1 => decompress_gzip(compressed, max_size)?,
         2 => decompress_zstd(compressed, max_size)?,
-        _ => return Err(CowrieError::InvalidData("unknown compression".into())),
+        other => return Err(CowrieError::UnsupportedCompression(other)),
     };
 
     if decompressed.len() != uncompressed_len as usize {

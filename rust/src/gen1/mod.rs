@@ -410,6 +410,29 @@ fn encode_value<W: Write>(w: &mut W, val: &Value) -> Result<(), Gen1Error> {
     Ok(())
 }
 
+/// Reserve at most a fixed number of slots. The vector grows as elements actually parse, so memory
+/// follows the input instead of the declared count — a five-byte message claiming 25M nodes cannot
+/// make us reserve 25M slots before the first read fails.
+fn capped_capacity(count: usize) -> usize {
+    count.min(1024)
+}
+
+/// Read exactly `len` bytes without trusting `len` for the allocation: grow in bounded chunks, so a
+/// truncated input fails on the first chunk rather than after reserving its declared size.
+fn read_exact_guarded(r: &mut impl Read, len: usize) -> Result<Vec<u8>, Gen1Error> {
+    const CHUNK: usize = 64 * 1024;
+    let mut out = Vec::with_capacity(len.min(CHUNK));
+    let mut left = len;
+    while left > 0 {
+        let n = left.min(CHUNK);
+        let start = out.len();
+        out.resize(start + n, 0);
+        r.read_exact(&mut out[start..])?;
+        left -= n;
+    }
+    Ok(out)
+}
+
 fn decode_value_depth<R: Read>(r: &mut R, depth: usize) -> Result<Value, Gen1Error> {
     // Security: check depth limit
     if depth > limits::MAX_DEPTH {
@@ -439,8 +462,7 @@ fn decode_value_depth<R: Read>(r: &mut R, depth: usize) -> Result<Value, Gen1Err
             if len > limits::MAX_STRING_LEN {
                 return Err(Gen1Error::MaxStringLen);
             }
-            let mut buf = vec![0u8; len];
-            r.read_exact(&mut buf)?;
+            let buf = read_exact_guarded(r, len)?;
             String::from_utf8(buf)
                 .map(Value::String)
                 .map_err(|_| Gen1Error::InvalidUtf8)
@@ -450,8 +472,7 @@ fn decode_value_depth<R: Read>(r: &mut R, depth: usize) -> Result<Value, Gen1Err
             if len > limits::MAX_BYTES_LEN {
                 return Err(Gen1Error::MaxBytesLen);
             }
-            let mut buf = vec![0u8; len];
-            r.read_exact(&mut buf)?;
+            let buf = read_exact_guarded(r, len)?;
             Ok(Value::Bytes(buf))
         }
         tags::ARRAY => {
@@ -459,7 +480,7 @@ fn decode_value_depth<R: Read>(r: &mut R, depth: usize) -> Result<Value, Gen1Err
             if count > limits::MAX_ARRAY_LEN {
                 return Err(Gen1Error::MaxArrayLen);
             }
-            let mut arr = Vec::with_capacity(count);
+            let mut arr = Vec::with_capacity(capped_capacity(count));
             for _ in 0..count {
                 arr.push(decode_value_depth(r, depth + 1)?);
             }
@@ -470,14 +491,13 @@ fn decode_value_depth<R: Read>(r: &mut R, depth: usize) -> Result<Value, Gen1Err
             if count > limits::MAX_OBJECT_LEN {
                 return Err(Gen1Error::MaxObjectLen);
             }
-            let mut members = Vec::with_capacity(count);
+            let mut members = Vec::with_capacity(capped_capacity(count));
             for _ in 0..count {
                 let key_len = read_uvarint(r)? as usize;
                 if key_len > limits::MAX_STRING_LEN {
                     return Err(Gen1Error::MaxStringLen);
                 }
-                let mut key_buf = vec![0u8; key_len];
-                r.read_exact(&mut key_buf)?;
+                let key_buf = read_exact_guarded(r, key_len)?;
                 let key = String::from_utf8(key_buf).map_err(|_| Gen1Error::InvalidUtf8)?;
                 let val = decode_value_depth(r, depth + 1)?;
                 members.push((key, val));
@@ -516,8 +536,7 @@ fn decode_value_depth<R: Read>(r: &mut R, depth: usize) -> Result<Value, Gen1Err
             if len > limits::MAX_BYTES_LEN {
                 return Err(Gen1Error::MaxBytesLen);
             }
-            let mut payload = vec![0u8; len];
-            r.read_exact(&mut payload)?;
+            let payload = read_exact_guarded(r, len)?;
             Ok(Value::BigInt(payload))
         }
         tags::EXTENSION => {
@@ -526,8 +545,7 @@ fn decode_value_depth<R: Read>(r: &mut R, depth: usize) -> Result<Value, Gen1Err
             if len > limits::MAX_BYTES_LEN {
                 return Err(Gen1Error::MaxBytesLen);
             }
-            let mut data = vec![0u8; len];
-            r.read_exact(&mut data)?;
+            let data = read_exact_guarded(r, len)?;
             Ok(Value::Extension { ext_type, data })
         }
         tags::INT64_ARRAY => {
@@ -535,7 +553,7 @@ fn decode_value_depth<R: Read>(r: &mut R, depth: usize) -> Result<Value, Gen1Err
             if count > limits::MAX_ARRAY_LEN {
                 return Err(Gen1Error::MaxArrayLen);
             }
-            let mut arr = Vec::with_capacity(count);
+            let mut arr = Vec::with_capacity(capped_capacity(count));
             for _ in 0..count {
                 let mut buf = [0u8; 8];
                 r.read_exact(&mut buf)?;
@@ -548,7 +566,7 @@ fn decode_value_depth<R: Read>(r: &mut R, depth: usize) -> Result<Value, Gen1Err
             if count > limits::MAX_ARRAY_LEN {
                 return Err(Gen1Error::MaxArrayLen);
             }
-            let mut arr = Vec::with_capacity(count);
+            let mut arr = Vec::with_capacity(capped_capacity(count));
             for _ in 0..count {
                 let mut buf = [0u8; 8];
                 r.read_exact(&mut buf)?;
@@ -561,14 +579,13 @@ fn decode_value_depth<R: Read>(r: &mut R, depth: usize) -> Result<Value, Gen1Err
             if count > limits::MAX_ARRAY_LEN {
                 return Err(Gen1Error::MaxArrayLen);
             }
-            let mut arr = Vec::with_capacity(count);
+            let mut arr = Vec::with_capacity(capped_capacity(count));
             for _ in 0..count {
                 let len = read_uvarint(r)? as usize;
                 if len > limits::MAX_STRING_LEN {
                     return Err(Gen1Error::MaxStringLen);
                 }
-                let mut buf = vec![0u8; len];
-                r.read_exact(&mut buf)?;
+                let buf = read_exact_guarded(r, len)?;
                 arr.push(String::from_utf8(buf).map_err(|_| Gen1Error::InvalidUtf8)?);
             }
             Ok(Value::StringArray(arr))
@@ -580,21 +597,19 @@ fn decode_value_depth<R: Read>(r: &mut R, depth: usize) -> Result<Value, Gen1Err
             if label_len > limits::MAX_STRING_LEN {
                 return Err(Gen1Error::MaxStringLen);
             }
-            let mut label_buf = vec![0u8; label_len];
-            r.read_exact(&mut label_buf)?;
+            let label_buf = read_exact_guarded(r, label_len)?;
             let label = String::from_utf8(label_buf).map_err(|_| Gen1Error::InvalidUtf8)?;
             let prop_count = read_uvarint(r)? as usize;
             if prop_count > limits::MAX_OBJECT_LEN {
                 return Err(Gen1Error::MaxObjectLen);
             }
-            let mut properties = HashMap::with_capacity(prop_count);
+            let mut properties = HashMap::with_capacity(capped_capacity(prop_count));
             for _ in 0..prop_count {
                 let key_len = read_uvarint(r)? as usize;
                 if key_len > limits::MAX_STRING_LEN {
                     return Err(Gen1Error::MaxStringLen);
                 }
-                let mut key_buf = vec![0u8; key_len];
-                r.read_exact(&mut key_buf)?;
+                let key_buf = read_exact_guarded(r, key_len)?;
                 let key = String::from_utf8(key_buf).map_err(|_| Gen1Error::InvalidUtf8)?;
                 let val = decode_value_depth(r, depth + 1)?;
                 properties.insert(key, val);
@@ -612,21 +627,19 @@ fn decode_value_depth<R: Read>(r: &mut R, depth: usize) -> Result<Value, Gen1Err
             if label_len > limits::MAX_STRING_LEN {
                 return Err(Gen1Error::MaxStringLen);
             }
-            let mut label_buf = vec![0u8; label_len];
-            r.read_exact(&mut label_buf)?;
+            let label_buf = read_exact_guarded(r, label_len)?;
             let label = String::from_utf8(label_buf).map_err(|_| Gen1Error::InvalidUtf8)?;
             let prop_count = read_uvarint(r)? as usize;
             if prop_count > limits::MAX_OBJECT_LEN {
                 return Err(Gen1Error::MaxObjectLen);
             }
-            let mut properties = HashMap::with_capacity(prop_count);
+            let mut properties = HashMap::with_capacity(capped_capacity(prop_count));
             for _ in 0..prop_count {
                 let key_len = read_uvarint(r)? as usize;
                 if key_len > limits::MAX_STRING_LEN {
                     return Err(Gen1Error::MaxStringLen);
                 }
-                let mut key_buf = vec![0u8; key_len];
-                r.read_exact(&mut key_buf)?;
+                let key_buf = read_exact_guarded(r, key_len)?;
                 let key = String::from_utf8(key_buf).map_err(|_| Gen1Error::InvalidUtf8)?;
                 let val = decode_value_depth(r, depth + 1)?;
                 properties.insert(key, val);
@@ -644,7 +657,16 @@ fn decode_value_depth<R: Read>(r: &mut R, depth: usize) -> Result<Value, Gen1Err
             let id_width = id_width_buf[0];
             let node_count = read_uvarint(r)?;
             let edge_count = read_uvarint(r)?;
-            let mut row_offsets = Vec::with_capacity((node_count + 1) as usize);
+            // Both counts drive allocations below, so neither may be trusted: the offsets
+            // vector is sized by node_count and the index block by edge_count * width.
+            if node_count > limits::MAX_ARRAY_LEN as u64 {
+                return Err(Gen1Error::MaxArrayLen);
+            }
+            if edge_count > limits::MAX_ARRAY_LEN as u64 {
+                return Err(Gen1Error::MaxArrayLen);
+            }
+            let mut row_offsets =
+                Vec::with_capacity(capped_capacity((node_count + 1) as usize));
             for _ in 0..=node_count {
                 row_offsets.push(read_uvarint(r)?);
             }
@@ -653,8 +675,7 @@ fn decode_value_depth<R: Read>(r: &mut R, depth: usize) -> Result<Value, Gen1Err
             } else {
                 edge_count as usize * 8
             };
-            let mut col_indices = vec![0u8; col_bytes_len];
-            r.read_exact(&mut col_indices)?;
+            let col_indices = read_exact_guarded(r, col_bytes_len)?;
             Ok(Value::AdjList {
                 id_width,
                 node_count,
@@ -668,7 +689,7 @@ fn decode_value_depth<R: Read>(r: &mut R, depth: usize) -> Result<Value, Gen1Err
             if count > limits::MAX_ARRAY_LEN {
                 return Err(Gen1Error::MaxArrayLen);
             }
-            let mut nodes = Vec::with_capacity(count);
+            let mut nodes = Vec::with_capacity(capped_capacity(count));
             for _ in 0..count {
                 nodes.push(decode_value_depth(r, depth + 1)?);
             }
@@ -679,7 +700,7 @@ fn decode_value_depth<R: Read>(r: &mut R, depth: usize) -> Result<Value, Gen1Err
             if count > limits::MAX_ARRAY_LEN {
                 return Err(Gen1Error::MaxArrayLen);
             }
-            let mut edges = Vec::with_capacity(count);
+            let mut edges = Vec::with_capacity(capped_capacity(count));
             for _ in 0..count {
                 edges.push(decode_value_depth(r, depth + 1)?);
             }
@@ -690,7 +711,7 @@ fn decode_value_depth<R: Read>(r: &mut R, depth: usize) -> Result<Value, Gen1Err
             if node_count > limits::MAX_ARRAY_LEN {
                 return Err(Gen1Error::MaxArrayLen);
             }
-            let mut nodes = Vec::with_capacity(node_count);
+            let mut nodes = Vec::with_capacity(capped_capacity(node_count));
             for _ in 0..node_count {
                 nodes.push(decode_value_depth(r, depth + 1)?);
             }
@@ -698,7 +719,7 @@ fn decode_value_depth<R: Read>(r: &mut R, depth: usize) -> Result<Value, Gen1Err
             if edge_count > limits::MAX_ARRAY_LEN {
                 return Err(Gen1Error::MaxArrayLen);
             }
-            let mut edges = Vec::with_capacity(edge_count);
+            let mut edges = Vec::with_capacity(capped_capacity(edge_count));
             for _ in 0..edge_count {
                 edges.push(decode_value_depth(r, depth + 1)?);
             }
@@ -706,14 +727,13 @@ fn decode_value_depth<R: Read>(r: &mut R, depth: usize) -> Result<Value, Gen1Err
             if meta_count > limits::MAX_OBJECT_LEN {
                 return Err(Gen1Error::MaxObjectLen);
             }
-            let mut meta = HashMap::with_capacity(meta_count);
+            let mut meta = HashMap::with_capacity(capped_capacity(meta_count));
             for _ in 0..meta_count {
                 let key_len = read_uvarint(r)? as usize;
                 if key_len > limits::MAX_STRING_LEN {
                     return Err(Gen1Error::MaxStringLen);
                 }
-                let mut key_buf = vec![0u8; key_len];
-                r.read_exact(&mut key_buf)?;
+                let key_buf = read_exact_guarded(r, key_len)?;
                 let key = String::from_utf8(key_buf).map_err(|_| Gen1Error::InvalidUtf8)?;
                 let val = decode_value_depth(r, depth + 1)?;
                 meta.insert(key, val);

@@ -22,6 +22,9 @@ pub enum CowrieError {
     DuplicateKey,
     /// Strict-mode (SPEC-v1 §5.3) rejection of well-formed-but-non-canonical input.
     NonCanonical(String),
+    /// A bare message declared a compression (§2.2). Compression is transport framing only;
+    /// the value body is always uncompressed, so a non-zero byte here is a different format.
+    UnsupportedCompression(u8),
 }
 
 impl fmt::Display for CowrieError {
@@ -31,6 +34,9 @@ impl fmt::Display for CowrieError {
             CowrieError::InvalidVersion(v) => write!(f, "invalid Cowrie version: {}", v),
             CowrieError::InvalidTag(t) => write!(f, "invalid tag: 0x{:02x}", t),
             CowrieError::InvalidData(msg) => write!(f, "invalid data: {}", msg),
+            CowrieError::UnsupportedCompression(b) => {
+                write!(f, "unsupported compression byte 0x{:02x} in a bare message", b)
+            }
             CowrieError::Truncated => write!(f, "truncated data"),
             CowrieError::InvalidUtf8 => write!(f, "invalid UTF-8"),
             CowrieError::Io(e) => write!(f, "I/O error: {}", e),
@@ -82,6 +88,7 @@ impl CowrieError {
             // other InvalidData failures are likewise structural varint/length problems.
             CowrieError::InvalidData(_) => "ERR_INVALID_VARINT",
             CowrieError::InvalidUtf8 => "ERR_INVALID_UTF8",
+            CowrieError::UnsupportedCompression(_) => "ERR_UNSUPPORTED_COMPRESSION",
             // §2.7 limits.
             CowrieError::TooDeep => "ERR_TOO_DEEP",
             CowrieError::TooLarge => "ERR_TOO_LARGE",

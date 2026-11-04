@@ -83,14 +83,16 @@ declared when all of the following hold. Each is checkable from the repository.
 | 3 | Strict decode never accepts bytes and returns a different value | `law_bytes` gate: 73 canonical controls + 511 mutated encodings |
 | 4 | The normative specification is in the repository and versioned | `_md-archive/docs/SPEC-v1.md`; the freeze publishes its hash in `FREEZE.sha256` |
 | 5 | The negative corpus covers every rejection the spec names, with exact error codes | `negative --strict` gate (29 fixtures today; grows, never shrinks) |
-| 6 | Hostile input is fuzzed, not merely tested | libFuzzer targets in CI, restored from `attic/` |
+| 6 | Hostile input is fuzzed, not merely tested | `.github/workflows/fuzz.yml` — Go (3 targets) and Rust libFuzzer (2 targets), weekly and on demand |
 | 7 | A defect found post-freeze has a written errata process | this document, §"If a defect is found" |
 | 8 | At least one deployment the maintainers do not control runs it in production | evidence, not intent |
 
 **As of 0.9.0:** 1–3 hold and are enforced by CI. 4 holds (the spec is versioned in the
 repository); publishing its hash is part of the freeze itself. 5 is close — 29 fixtures with
-exact-code checking, but nobody has audited it against every rejection the spec names. 6 is not
-wired: the fuzz workflow is in `attic/`. 7 is this document, unratified. 8 does not hold and
+exact-code checking, but nobody has audited it against every rejection the spec names. 6 is wired and
+has already paid for itself: the Go law target found two strict-decoder defects in its first minute
+of running — a bare message with a non-zero compression byte, and a Decimal128 scale narrowed from
+int64 to int32 — neither of which any of the fifteen deterministic gates caught. 7 is this document, unratified. 8 does not hold and
 cannot be manufactured.
 
 ---
@@ -105,7 +107,8 @@ the specification as the artifact and the implementations as ports of it.
 
 The specific gates on the way there, in order:
 
-1. Restore fuzzing to CI (precondition 6).
+1. ~~Restore fuzzing to CI (precondition 6).~~ Done — and it immediately found two defects the
+deterministic gates could not.
 2. Get one external deployment using it for real artifact identity (precondition 8).
 3. Only then publish 1.0 and this policy as ratified.
 

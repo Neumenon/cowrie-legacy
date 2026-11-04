@@ -16,6 +16,7 @@ import (
 var (
 	ErrInvalidMagic     = errors.New("cowrie: invalid magic bytes")
 	ErrInvalidVersion   = errors.New("cowrie: unsupported version")
+	ErrUnsupportedCompression = errors.New("cowrie: unsupported compression")
 	ErrUnexpectedEOF    = errors.New("cowrie: unexpected end of data")
 	ErrInvalidTag       = errors.New("cowrie: invalid type tag")
 	ErrInvalidFieldID   = errors.New("cowrie: invalid field ID")
@@ -611,14 +612,16 @@ func decode(r *reader) (*Value, error) {
 		return nil, ErrInvalidVersion
 	}
 
-	// Read flags
-	flags, err := r.readByte()
+	// Compression byte (§2.2). A bare message is always uncompressed; compression is
+	// transport framing, handled by DecodeFramed, and identity is over uncompressed bytes.
+	// Ignoring a non-zero value here would accept a byte string that re-encodes differently.
+	comp, err := r.readByte()
 	if err != nil {
 		return nil, err
 	}
-
-	// bits 1-3 reserved; ignore unknown flag bits for forward compatibility
-	_ = flags
+	if comp != 0 {
+		return nil, fmt.Errorf("%w: compression byte 0x%02x in a bare message (use DecodeFramed)", ErrUnsupportedCompression, comp)
+	}
 
 	// Read dictionary
 	dictLen, err := r.readUvarint()
@@ -762,7 +765,7 @@ func decodeValue(r *reader, dict []string) (*Value, error) {
 		if r.strict && decimalNotLowestTerms(coefBytes, scale) {
 			return nil, fmt.Errorf("%w: decimal not lowest terms", ErrNonCanonical)
 		}
-		return NewDecimal128(int32(scale), coef), nil // scale is int64-svarint on the wire; int32 covers the decimal domain
+		return NewDecimal128(scale, coef), nil // scale is an int64 svarint on the wire (§2.3)
 
 	case TagString:
 		s, err := r.readStringWithLimit(r.opts.MaxStringLen)

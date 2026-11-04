@@ -1,0 +1,81 @@
+name: Fuzz
+
+# Fuzzing is not a gate: it runs on a schedule and on demand, because a five-minute budget every
+# push would either be too short to find anything or too slow to keep. Two bugs in the current
+# round of work were found here in under a second each — a bare message with a non-zero compression
+# byte, and a Decimal128 scale narrowed from int64 to int32 — so this is not decoration.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 4 * * 0'  # Weekly: Sunday 04:00 UTC
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ─── Go ──────────────────────────────────────────────────────────────────────────────────
+  # FuzzCanonicalLaw is the important one: if strict decode accepts a byte string, re-encoding
+  # the value must reproduce it exactly. FuzzDecode asserts panic-freedom, FuzzFile asserts that
+  # a validated file re-encodes to itself.
+  go-fuzz:
+    name: Go Fuzz (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [FuzzDecode, FuzzCanonicalLaw, FuzzFile]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version: 'stable'
+
+      - name: Fuzz ${{ matrix.target }}
+        run: cd go && go test -run=^$ -fuzz=^${{ matrix.target }}$ -fuzztime=5m .
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: go-fuzz-crashes-${{ matrix.target }}
+          path: go/testdata/fuzz/
+
+  # ─── Rust ────────────────────────────────────────────────────────────────────────────────
+  # fuzz_decode: arbitrary bytes must never panic. fuzz_roundtrip: structured values must encode,
+  # decode, and re-encode to identical bytes.
+  rust-fuzz:
+    name: Rust Fuzz (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [fuzz_decode, fuzz_roundtrip]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: dtolnay/rust-toolchain@nightly
+
+      - name: Cache cargo-fuzz
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/cargo-fuzz
+            ~/.cargo/registry
+          key: cargo-fuzz-${{ runner.os }}
+
+      - name: Install cargo-fuzz
+        run: command -v cargo-fuzz >/dev/null || cargo install cargo-fuzz --locked
+
+      - name: Fuzz ${{ matrix.target }}
+        run: cd rust && cargo fuzz run ${{ matrix.target }} -- -max_total_time=300
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: rust-fuzz-crashes-${{ matrix.target }}
+          path: rust/fuzz/artifacts/

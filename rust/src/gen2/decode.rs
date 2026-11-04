@@ -155,8 +155,14 @@ impl<'a> Reader<'a> {
             return Err(CowrieError::InvalidVersion(version));
         }
 
-        // Read flags (reserved — ignore)
-        let _flags = self.read_byte()?;
+        // §2.2: the byte after the version is the compression marker. A bare value message is
+        // always uncompressed — compression is transport framing (decode_framed). Ignoring a
+        // non-zero value mis-parses the stream and accepts a byte string that re-encodes
+        // differently.
+        let comp = self.read_byte()?;
+        if comp != 0 {
+            return Err(CowrieError::UnsupportedCompression(comp));
+        }
 
         // Read dictionary
         let dict_len = self.read_uvarint()? as usize;

@@ -143,5 +143,10 @@
     "hex": "434f575201000201610162d10045",
     "expect": "ERR_NON_CANONICAL",
     "tier": "non-canonical"
+  },
+  "compression_byte_in_bare_message": {
+    "hex": "434f575201300041",
+    "expect": "ERR_UNSUPPORTED_COMPRESSION",
+    "tier": "malformed"
   }
 }

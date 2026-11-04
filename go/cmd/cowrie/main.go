@@ -197,6 +197,8 @@ func specErrorCode(err error) string {
 		return "ERR_INVALID_FIELD_ID"
 	case errors.Is(err, cowrie.ErrDuplicateKey):
 		return "ERR_DUPLICATE_KEY"
+	case errors.Is(err, cowrie.ErrUnsupportedCompression):
+		return "ERR_UNSUPPORTED_COMPRESSION"
 	case errors.Is(err, cowrie.ErrTooLarge):
 		// §2.7 size limit (e.g. tensor rank > MAX_RANK)
 		return "ERR_TOO_LARGE"
@@ -461,7 +463,7 @@ func infoCmd(args []string) {
 // name<TAB>hex. tools/constructor_gate.py compares the output to the Python reference, so a
 // value constructed in Go that does not match the oracle fails the gate.
 func casesCmd() {
-	dec := func(scale int32, c0 byte) *cowrie.Value {
+	dec := func(scale int64, c0 byte) *cowrie.Value {
 		var a [16]byte
 		a[0] = c0
 		return cowrie.NewDecimal128(scale, a)
