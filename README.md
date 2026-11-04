@@ -191,25 +191,40 @@ The answer here is an **oracle**:
         byte-identical, or the build is red
 ```
 
-Eleven gates run on every push, and one red gate blocks merge:
+Thirteen gates run on every push, and one red gate blocks merge:
 
 | gate | what it proves |
 |---|---|
 | `count_guard` | the conformance corpus only ever grows |
-| `pytest cowrie_ref` | the oracle is internally consistent (236 tests) |
-| `conformance` | 73 golden vectors × 4 languages, byte-identical |
+| `pytest cowrie_ref` | the oracle is internally consistent (242 tests) |
+| `conformance` | 73 golden vectors × 4 languages, byte-identical after decode → re-encode |
 | `content_address` | all four agree on the SHA-256 multihash |
 | `file_identity` | all four agree on the CWRF Merkle root, and re-encode files byte-identically |
 | `tensor_view` | all four agree on where tensor data starts (the zero-copy contract) |
 | `fingerprint` | all four agree on `fingerprint64` |
 | `dataset_identity` | all four agree on `dataset_root` |
-| `negative` (lenient) | 27 malformed fixtures rejected by every decoder |
-| `negative --strict` | the same 27 rejected with the *exact* expected `ERR_*` code |
-| `fuzz_differential` | 150 random values: Go/Rust/TS byte-identical to the oracle |
+| `framed` | §2.2 transport framing: header parity for none/gzip/zstd, and bytes framed by any implementation decode to identical canonical bytes in every implementation |
+| `negative` (lenient) | 29 malformed fixtures rejected by every decoder |
+| `negative --strict` | the same 29 rejected with the *exact* expected `ERR_*` code |
+| `fuzz_differential` | 150 random values: Go/Rust/TS byte-identical to the oracle after decode → re-encode |
+| `law_bytes` | **both halves**: 73 canonical controls must be accepted unchanged, and 511 mutated encodings must be rejected or echoed unchanged — a strict decoder may never accept bytes and return different ones |
 
 ```bash
 bash tools/run_all_gates.sh     # the only command that matters
 ```
+
+**What this suite does not cover.** Every cross-language gate above feeds an implementation bytes it
+already produced or received — decode, then re-encode, then compare. That proves the *decoders*
+agree. It does not prove the *encoders* agree, because a value constructed in code never reaches
+the wire in three of the four implementations. Concretely, at 0.9.0:
+
+- TypeScript converts a `bigint` to bytes **big-endian**, so `SJ.bigint(2^64)` encodes a value of 1;
+- Rust and TypeScript write a BigInt that fits Int/Uint as a BigInt anyway (§5.3 forbids it);
+- Rust and TypeScript write an unreduced Decimal128 coefficient, and Rust's `Decimal(Vec<u8>)`
+  takes the raw wire scale rather than a scale number.
+
+Python and Go are byte-identical for every constructed value tested. A constructor gate — build the
+same value in all four languages, compare to the oracle — is the missing half.
 
 The error *codes* are part of the ABI. `ERR_NON_CANONICAL`, `ERR_RESERVED_TAG`,
 `ERR_DUPLICATE_KEY` — the message is free text, the code is law, and all four implementations must
