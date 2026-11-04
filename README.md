@@ -424,6 +424,12 @@ cowrie verify < artifact.cwrf          # <merkle-root-hex> OK   (exit 1 on tampe
 cd typescript && npx tsx recode.ts --verify < ../artifact.cwrf
 ```
 
+**Registry status:** not published yet. The artifacts are verified against this tree — `cargo
+package` builds and compiles `cowrie-rs` standalone (394 KiB, 35 files), and `npm pack` produces a
+45.9 kB `cowrie-codec` tarball containing the built `dist/` (the tarball previously contained no
+code at all, because nothing built `dist/` before packing). A release is a publish away, not a
+build away.
+
 **Go**
 
 ```go
