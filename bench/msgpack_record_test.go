@@ -1,6 +1,7 @@
-package cowrie
+package bench
 
 import (
+	. "github.com/Neumenon/cowrie/go"
 	"encoding/binary"
 	"math"
 	"math/rand"

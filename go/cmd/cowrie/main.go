@@ -238,6 +238,7 @@ func recodeCmd(args []string) {
 	tensorSpans := fs.Bool("tensor-spans", false, "Read a canonical Cowrie message on stdin, decode, print one line per tensor in document order: \"<data_offset> <data_len> <dtype> <shape>\"")
 	fingerprint := fs.Bool("fingerprint", false, "Read a canonical Cowrie message on stdin, decode, print the §4 fingerprint64 as 16 lowercase hex chars")
 	datasetRoot := fs.Bool("dataset-root", false, "Read uvarint(n) then n repetitions of (uvarint(len) || blob) on stdin; print the §7 merkle_root over that ORDERED blob list as 68 lowercase hex chars")
+	framed := fs.String("framed", "", "Read a canonical Cowrie message on stdin, re-emit the §2.2 framed composite (gzip|zstd|none) to stdout")
 	fs.Parse(args)
 
 	if *datasetRoot {
@@ -360,6 +361,31 @@ func recodeCmd(args []string) {
 	if err != nil {
 		failDecode(err)
 	}
+
+	if *framed != "" {
+		// §2.2 framed composite: read canonical (or framed, comp=0) stdin, re-emit
+		// framed with the requested transport compression.
+		var comp cowrie.Compression
+		switch *framed {
+		case "none":
+			comp = cowrie.CompressionNone
+		case "gzip":
+			comp = cowrie.CompressionGzip
+		case "zstd":
+			comp = cowrie.CompressionZstd
+		default:
+			fmt.Fprintf(os.Stderr, "Error: unknown --framed compression %q (use none|gzip|zstd)\n", *framed)
+			os.Exit(1)
+		}
+		out, err := cowrie.EncodeFramed(val, comp)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error framing: %v\n", err)
+			os.Exit(1)
+		}
+		os.Stdout.Write(out)
+		return
+	}
+
 	output, err := cowrie.Encode(val)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error encoding: %v\n", err)

@@ -1,7 +1,7 @@
 {
   "name": "cowrie-codec",
   "version": "0.9.0",
-  "description": "Cowrie v1 \u2014 deterministic, content-addressable, AI-native binary codec for TypeScript (zero-copy tensors, multihash content addresses, Merkle file identity)",
+  "description": "Cowrie v1 — deterministic, content-addressable, AI-native binary codec for TypeScript (zero-copy tensors, multihash content addresses, Merkle file identity)",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
@@ -35,11 +35,12 @@
   "devDependencies": {
     "@msgpack/msgpack": "^3.1.3",
     "@types/node": "^25.0.9",
+    "@types/pako": "^2.0.4",
     "c8": "^11.0.0",
+    "pako": "^3.0.3",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   },
-  "dependencies": {},
   "homepage": "https://github.com/Neumenon/cowrie#readme",
   "bugs": {
     "url": "https://github.com/Neumenon/cowrie/issues"

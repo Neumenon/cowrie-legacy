@@ -1073,6 +1073,26 @@ describe('gen2 framed compression', () => {
   it('decodeFramed truncated throws', () => {
     assert.throws(() => decodeFramed(new Uint8Array(2)), /truncated/i);
   });
+
+  it('encodeFramed zstd framing matches the §2.2 6-byte header', () => {
+    const v = SJ.object({ big: SJ.string('x'.repeat(512)) });
+    const framed = encodeFramed(v, Compression.ZSTD);
+    assert.strictEqual(framed[0], 0x43); // 'C'
+    assert.strictEqual(framed[4], 1); // version
+    assert.strictEqual(framed[5], Compression.ZSTD);
+    const decoded = decodeFramed(framed);
+    assert.strictEqual((decoded.data as Record<string, Value>)['big'].data, 'x'.repeat(512));
+    // decoded via decode(): framed with comp byte 0 re-decodes the same value
+    assert.deepStrictEqual(decoded.data, v.data);
+  });
+
+  it('decodeFramed rejects non-gzip/zstd compression bytes', () => {
+    const v = SJ.object({ x: SJ.int64(1) });
+    const framed = encodeFramed(v, Compression.ZSTD);
+    const bad = new Uint8Array(framed);
+    bad[5] = 0x07;
+    assert.throws(() => decodeFramed(bad), /compression.*transport-only|ERR_UNSUPPORTED_COMPRESSION/);
+  });
 });
 
 // ============================================================

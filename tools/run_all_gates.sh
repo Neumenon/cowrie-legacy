@@ -49,7 +49,7 @@ fi
 # if it is absent rather than silently rebuilding.
 if [[ ! -x "${RUST_RECODE}" ]]; then
   echo "!! Rust recode binary missing at ${RUST_RECODE}" >&2
-  echo "!! Build it once with: ( cd rust && cargo build --release --example recode )" >&2
+  echo "!! Build it once with: ( cd rust && cargo build --release --example recode --features zstd )" >&2
   exit 1
 fi
 
@@ -102,6 +102,9 @@ run "fingerprint_gate" "${PY}" tools/fingerprint_gate.py
 
 # (b6) Dataset-identity parity (stream layer): all impls agree on dataset_root (Merkle DAG over file roots).
 run "dataset_identity_gate" "${PY}" tools/dataset_identity_gate.py
+
+# (b7) Framed-composite parity (§2.2 transport framing): header parity + cross-impl decode matrix.
+run "framed_gate" "${PY}" tools/framed_gate.py
 
 # (c) Negative gate, lenient decode: malformed fixtures must be rejected.
 run "negative_gate (lenient)" "${PY}" tools/negative_gate.py

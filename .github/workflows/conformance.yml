@@ -63,7 +63,7 @@ jobs:
 
       - name: Build Rust recode example
         working-directory: rust
-        run: cargo build --release --example recode
+        run: cargo build --release --example recode --features zstd
 
       # ---- install TS deps ------------------------------------------------
       - name: Install TypeScript deps

@@ -13,7 +13,7 @@
 //   --file-id     : decode+verify, print the merkle_root as one line of lowercase hex (68 chars).
 //   --file-recode : decode, RE-ENCODE the file, write raw bytes to stdout (reproduces input
 //                   byte-for-byte for canonical files).
-import { encode, decode, addressOfBytes, decodeFile, encodeFile, fileIdentity, tensorSpans, schemaFingerprint64, merkleRoot } from "./src/gen2/index";
+import { encode, decode, encodeFramed, decodeFramed, addressOfBytes, decodeFile, encodeFile, fileIdentity, tensorSpans, schemaFingerprint64, merkleRoot, Compression } from "./src/gen2/index";
 
 const strict = process.argv.includes("--strict") || process.env.STRICT === "1";
 // Dataset/stream layer Merkle root (SPEC-v1 §7 dataset_root): read uvarint(n) then n
@@ -27,6 +27,9 @@ const tensorSpansMode = process.argv.includes("--tensor-spans");
 // Fingerprint mode (SPEC-v1 §4): decode and print the §4 FPC-grammar fingerprint64 as
 // 16 lowercase hex chars. Combines with --strict.
 const fingerprint = process.argv.includes("--fingerprint");
+// §2.2 framed composite mode: canonical stdin -> framed stdout (gzip|zstd|none).
+const framedArg = process.argv.find((a) => a.startsWith("--framed="));
+const framedMode = framedArg ? framedArg.split("=", 2)[1] : null;
 
 const chunks: Buffer[] = [];
 process.stdin.on("data", (c: Buffer) => chunks.push(c));
@@ -73,8 +76,17 @@ process.stdin.on("end", () => {
     } else if (fileRecode) {
       const frames = decodeFile(data, true);
       process.stdout.write(Buffer.from(encodeFile(frames)));
+    } else if (framedMode !== null) {
+      let compression: Compression;
+      if (framedMode === "none") compression = Compression.NONE;
+      else if (framedMode === "gzip") compression = Compression.GZIP;
+      else if (framedMode === "zstd") compression = Compression.ZSTD;
+      else throw new Error(`unknown --framed compression ${framedMode} (use none|gzip|zstd)`);
+      const val = decodeFramed(data, { strict });
+      process.stdout.write(Buffer.from(encodeFramed(val, compression)));
     } else {
-      const canonical = encode(decode(data, { strict }));
+      const val = decodeFramed(data, { strict });
+      const canonical = encode(val);
       if (addr) {
         process.stdout.write(Buffer.from(addressOfBytes(canonical)).toString("hex") + "\n");
       } else {

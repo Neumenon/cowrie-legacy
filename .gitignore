@@ -53,3 +53,4 @@ cowrie-go-*context*.md
 tools/dist/
 typescript/*.tgz
 rust/target/
+go/cowrie

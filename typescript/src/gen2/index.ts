@@ -22,7 +22,6 @@ export enum Compression {
   ZSTD = 2,
 }
 
-const FLAG_COMPRESSED = 0x01;
 // bit 3 (0x08) is reserved — was FLAG_HAS_COLUMN_HINTS, now silently ignored on decode
 const COMPRESS_THRESHOLD = 256;
 
@@ -3167,12 +3166,11 @@ export function encodeFramed(v: Value, compression: Compression = Compression.NO
     return raw;
   }
 
-  // Build flags
-  const compBits = compression;
-  const flags = FLAG_COMPRESSED | ((compBits << 1) & 0x06);
-
-  // Compress the payload (after 4-byte header)
-  const payload = raw.slice(4);
+  // SPEC-v1 §2.2: canonical bytes are COWR(4) + version(1) + compression byte(1)
+  // followed by the body. Framed output keeps magic + version, sets the
+  // compression byte, then uvarint(uncompressed body length) + compressed body —
+  // byte-identical with the Go and Rust implementations.
+  const payload = raw.slice(6);
   let compressed: Uint8Array;
 
   if (compression === Compression.GZIP) {
@@ -3204,7 +3202,7 @@ export function encodeFramed(v: Value, compression: Compression = Compression.NO
     throw new Error(`Unknown compression type: ${compression}`);
   }
 
-  // Build output: header + uncompressed length (uvarint) + compressed data
+  // Build output: header (§2.2) + uncompressed length (uvarint) + compressed data
   const uncompressedLen = payload.length;
   const lenBytes: number[] = [];
   let len = uncompressedLen;
@@ -3214,13 +3212,11 @@ export function encodeFramed(v: Value, compression: Compression = Compression.NO
   }
   lenBytes.push(len);
 
-  const result = new Uint8Array(4 + lenBytes.length + compressed.length);
-  result[0] = raw[0]; // 'S'
-  result[1] = raw[1]; // 'J'
-  result[2] = raw[2]; // version
-  result[3] = flags;
-  result.set(lenBytes, 4);
-  result.set(compressed, 4 + lenBytes.length);
+  const result = new Uint8Array(6 + lenBytes.length + compressed.length);
+  result.set(raw.slice(0, 6), 0);
+  result[5] = compression;
+  result.set(lenBytes, 6);
+  result.set(compressed, 6 + lenBytes.length);
 
   return result;
 }
@@ -3265,30 +3261,42 @@ export function decodeFramed(
     maxSize = opts.maxDecompressedSize ?? Limits.MAX_DECOMPRESSED_SIZE;
   }
 
-  if (data.length < 4) {
-    throw new Error("truncated data");
+  if (data.length < 6) {
+    throw new CowrieError(ERR_TRUNCATED, 'truncated framed data');
   }
 
-  const flags = data[3];
+  // Header (§2.2): COWR + version + compression byte
+  if (
+    data[0] !== MAGIC[0] || data[1] !== MAGIC[1] || data[2] !== MAGIC[2] || data[3] !== MAGIC[3]
+  ) {
+    throw new CowrieError(ERR_INVALID_MAGIC, 'invalid magic bytes');
+  }
+  if (data[4] !== VERSION) {
+    throw new CowrieError(ERR_INVALID_VERSION, `unsupported version: ${data[4]}`);
+  }
+  const compType = data[5];
 
-  if ((flags & FLAG_COMPRESSED) === 0) {
-    // Not compressed, decode directly
+  if (compType === Compression.NONE) {
+    // Not compressed: the bytes are already a canonical §2.2 message.
     return decode(data, opts);
   }
+  if (compType !== Compression.GZIP && compType !== Compression.ZSTD) {
+    throw new CowrieError(
+      ERR_UNSUPPORTED_COMPRESSION,
+      `compression 0x${compType.toString(16)} is transport-only; canonical form is 0x00`,
+    );
+  }
 
-  // Get compression type
-  const compType = (flags & 0x06) >> 1;
-
-  // Read uncompressed length
-  let pos = 4;
+  // Read uncompressed length (uvarint, after the 6-byte header)
+  let pos = 6;
   let uncompressedLen = 0;
   let shift = 0;
   while (pos < data.length) {
     const b = data[pos++];
-    uncompressedLen |= (b & 0x7f) << shift;
+    uncompressedLen += (b & 0x7f) * Math.pow(2, shift);
     if ((b & 0x80) === 0) break;
     shift += 7;
-    if (shift > 28) throw new Error("varint overflow");
+    if (shift > 63) throw new CowrieError(ERR_TRUNCATED, 'varint overflow');
   }
   if (maxSize > 0 && uncompressedLen > maxSize) {
     throw new SecurityLimitExceeded(`Decompressed size too large: ${uncompressedLen} > ${maxSize}`);
@@ -3298,7 +3306,7 @@ export function decodeFramed(
   const compressed = data.slice(pos);
   let decompressed: Uint8Array;
 
-  if (compType === 1) {
+  if (compType === Compression.GZIP) {
     // GZIP
     try {
       const pako = require("pako");
@@ -3306,11 +3314,9 @@ export function decodeFramed(
     } catch {
       throw new Error("pako library required for gzip decompression");
     }
-  } else if (compType === 2) {
+  } else {
     // ZSTD - prefer Node built-in zlib (Node 21.7+), fall back to fzstd
     decompressed = decompressZstd(compressed);
-  } else {
-    throw new Error(`Unknown compression type: ${compType}`);
   }
 
   if (maxSize > 0 && decompressed.length > maxSize) {
@@ -3320,13 +3326,12 @@ export function decodeFramed(
     throw new Error("Decompressed length mismatch");
   }
 
-  // Reconstruct full Cowrie data with header
-  const full = new Uint8Array(4 + decompressed.length);
-  full[0] = data[0]; // 'S'
-  full[1] = data[1]; // 'J'
-  full[2] = data[2]; // version
-  full[3] = 0; // flags = 0 (no compression)
-  full.set(decompressed, 4);
+  // Reconstruct the full §2.2 message: COWR + version + compression byte 0x00 +
+  // the decompressed body, then decode canonically.
+  const full = new Uint8Array(6 + decompressed.length);
+  full.set(data.slice(0, 5), 0);
+  full[5] = 0;
+  full.set(decompressed, 6);
 
   return decode(full, opts);
 }

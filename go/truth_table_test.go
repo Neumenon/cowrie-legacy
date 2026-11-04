@@ -445,7 +445,7 @@ func testRoundtrip(t *testing.T, tc truthCase) {
 		}
 	}
 
-	decoded, err := Decode(data)
+	decoded, err := DecodeWithOptions(data, DecodeOptions{}) // truth-table fixtures are lenient-decode semantics; strict is gated elsewhere
 	if tc.Expect.OK {
 		if err != nil {
 			t.Fatalf("Decode failed: %v", err)
@@ -539,7 +539,7 @@ func testEncodeDecode(t *testing.T, tc truthCase) {
 		t.Fatalf("Encode failed: %v", err)
 	}
 
-	decoded, err := Decode(data)
+	decoded, err := DecodeWithOptions(data, DecodeOptions{}) // truth-table fixtures are lenient-decode semantics; strict is gated elsewhere
 	if tc.Expect.OK {
 		if err != nil {
 			t.Fatalf("Decode failed: %v", err)
@@ -670,7 +670,7 @@ func testRoundtripDepth(t *testing.T, tc truthCase) {
 		}
 	}
 
-	decoded, err := Decode(data)
+	decoded, err := DecodeWithOptions(data, DecodeOptions{}) // truth-table fixtures are lenient-decode semantics; strict is gated elsewhere
 	if tc.Expect.OK {
 		if err != nil {
 			t.Fatalf("Decode failed: %v", err)

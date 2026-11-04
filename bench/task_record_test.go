@@ -1,6 +1,7 @@
-package cowrie
+package bench
 
 import (
+	. "github.com/Neumenon/cowrie/go"
 	"encoding/binary"
 	"fmt"
 	"math"
@@ -57,6 +58,28 @@ func msgpackMust(b *testing.B, recs []benchRecord) []byte {
 	data, err := msgpack.Marshal(recs)
 	mustOk(b, err)
 	return data
+}
+
+// readUvarint decodes a LEB128 unsigned varint at pos and returns the value and the position
+// after it. Local copy: this module cannot reach the library's unexported reader.
+func readUvarint(data []byte, pos int) (uint64, int, error) {
+	var value uint64
+	var shift uint
+	for {
+		if pos >= len(data) {
+			return 0, pos, fmt.Errorf("uvarint: unexpected end of data")
+		}
+		b := data[pos]
+		pos++
+		if shift >= 64 {
+			return 0, pos, fmt.Errorf("uvarint: overflow")
+		}
+		value |= uint64(b&0x7f) << shift
+		if b&0x80 == 0 {
+			return value, pos, nil
+		}
+		shift += 7
+	}
 }
 
 // frameAt reads frame k via the CWRF footer: no body parsing.

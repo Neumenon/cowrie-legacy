@@ -121,10 +121,12 @@ func TestUUID128(t *testing.T) {
 }
 
 func TestDecimal128(t *testing.T) {
-	// 123.45 = 12345 * 10^-2
+	// 123.45 = 12345 * 10^-2. The wire coefficient is a 16-byte LITTLE-ENDIAN
+	// two's-complement integer (§2.3, and every fixture in testdata/v1_golden.json):
+	// 12345 = 0x3039 with 0x39 at index 0.
 	var coef [16]byte
-	coef[14] = 0x30 // 12345 = 0x3039
-	coef[15] = 0x39
+	coef[0] = 0x39 // 12345 = 0x3039, least significant byte first
+	coef[1] = 0x30
 	v := NewDecimal128(2, coef)
 
 	data, err := Encode(v)
@@ -151,8 +153,9 @@ func TestDecimal128(t *testing.T) {
 }
 
 func TestBigInt(t *testing.T) {
-	// 2^64 in bytes
-	bigint := []byte{0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+	// 2^64 (little-endian two's complement) — the smallest value that does NOT
+	// fit Int/Uint, so it remains canonical under strict decode (§5.3).
+	bigint := []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01}
 	v := BigInt(bigint)
 
 	data, err := Encode(v)
@@ -1061,7 +1064,9 @@ func TestSkipReservedTagRoundTrip(t *testing.T) {
 		0x05, 'h', 'e', 'l', 'l', 'o',
 	}
 
-	_, err := Decode(stream)
+	// lenient: only reserved-tag detection is asserted here; the fixture's
+	// dictionary is a fixed byte layout, and strict §5.3 would reject it first.
+	_, err := DecodeWithOptions(stream, DecodeOptions{})
 	if err == nil {
 		t.Fatal("Decode of a reserved 0x30 tag should fail with ERR_RESERVED_TAG, got nil")
 	}

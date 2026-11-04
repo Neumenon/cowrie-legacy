@@ -168,26 +168,16 @@ func encodeValueToBuf(buf *buffer, v *Value, d *dict) error {
 			buf.writeByte(TagFalse)
 		}
 	case TypeInt64:
-		if v.int64Val >= 0 && v.int64Val <= 127 {
-			buf.writeByte(byte(TagFixintBase + v.int64Val))
-		} else if v.int64Val >= -16 && v.int64Val <= -1 {
-			buf.writeByte(byte(TagFixnegBase + (-1 - v.int64Val)))
-		} else {
-			buf.writeByte(TagInt64)
-			buf.writeUvarint(zigzagEncode(v.int64Val))
-		}
+		writeIntInto(buf, v.int64Val)
 	case TypeUint64:
-		buf.writeByte(TagUint64)
-		buf.writeUvarint(v.uint64Val)
+		writeUintInto(buf, v.uint64Val)
 	case TypeFloat64:
 		buf.writeByte(TagFloat64)
 		var bits [8]byte
 		binary.LittleEndian.PutUint64(bits[:], uint64FromFloat64(v.float64Val))
 		buf.write(bits[:])
 	case TypeDecimal128:
-		buf.writeByte(TagDecimal128)
-		buf.writeUvarint(zigzagEncode(int64(v.decimal128.Scale)))
-		buf.write(v.decimal128.Coef[:])
+		writeDecimalInto(buf, v.decimal128.Scale, v.decimal128.Coef)
 	case TypeString:
 		buf.writeByte(TagString)
 		buf.writeString(v.stringVal)
@@ -204,9 +194,7 @@ func encodeValueToBuf(buf *buffer, v *Value, d *dict) error {
 		buf.writeByte(TagUUID128)
 		buf.write(v.uuid128[:])
 	case TypeBigInt:
-		buf.writeByte(TagBigInt)
-		buf.writeUvarint(uint64(len(v.bigintVal)))
-		buf.write(v.bigintVal)
+		writeBigIntInto(buf, v.bigintVal)
 	case TypeBitmask:
 		buf.writeByte(TagBitmask)
 		buf.writeUvarint(v.bitmaskVal.Count)

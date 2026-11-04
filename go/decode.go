@@ -132,6 +132,11 @@ type TensorSink interface {
 // DefaultDecodeOptions returns options with default security limits.
 func DefaultDecodeOptions() DecodeOptions {
 	return DecodeOptions{
+		// SPEC-v1 §5.3: strict-by-default. A lenient decode is an explicit
+		// opt-out (DecodeOptions{Strict: false} or the CLI --lenient flag), never
+		// an unstated deployment property — decoders in different languages must
+		// not disagree on the same bytes by accident.
+		Strict:       true,
 		MaxDepth:     DefaultMaxDepth,
 		MaxArrayLen:  DefaultMaxArrayLen,
 		MaxObjectLen: DefaultMaxObjectLen,

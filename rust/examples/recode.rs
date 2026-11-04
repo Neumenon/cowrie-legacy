@@ -20,7 +20,7 @@
 //! output. Offsets are captured during decode (not guessed), mirroring `cowrie_ref.tensor_spans`.
 use cowrie_rs::gen2::{
     address_of_bytes, decode_file, decode_framed, decode_framed_strict, encode, encode_file,
-    merkle_root, schema_fingerprint64, tensor_spans, to_hex,
+    encode_framed, merkle_root, schema_fingerprint64, tensor_spans, to_hex, Compression,
 };
 use std::io::{Read, Write};
 
@@ -33,9 +33,42 @@ fn main() {
     let tensor_spans_mode = std::env::args().skip(1).any(|a| a == "--tensor-spans");
     let fingerprint_mode = std::env::args().skip(1).any(|a| a == "--fingerprint");
     let dataset_root_mode = std::env::args().skip(1).any(|a| a == "--dataset-root");
+    let framed_mode = std::env::args()
+        .skip(1)
+        .find_map(|a| a.strip_prefix("--framed=").map(|s| s.to_string()));
 
     let mut data = Vec::new();
     std::io::stdin().read_to_end(&mut data).expect("failed to read stdin");
+
+    // --- §2.2 framed composite mode: canonical stdin -> framed stdout ---
+    if let Some(comp) = &framed_mode {
+        let compression = match comp.as_str() {
+            "none" => Compression::None,
+            "gzip" => Compression::Gzip,
+            "zstd" => Compression::Zstd,
+            _ => {
+                eprintln!("unknown --framed compression {} (use none|gzip|zstd)", comp);
+                std::process::exit(1);
+            }
+        };
+        let decoded = decode_framed(&data);
+        match decoded {
+            Ok(v) => match encode_framed(&v, compression) {
+                Ok(out) => {
+                    std::io::stdout().write_all(&out).expect("failed to write stdout");
+                }
+                Err(e) => {
+                    eprintln!("{}: encode error: {}", e.err_code(), e);
+                    std::process::exit(1);
+                }
+            },
+            Err(e) => {
+                eprintln!("{}: {}", e.err_code(), e);
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
 
     // --- Dataset/stream layer Merkle root (SPEC-v1 §7 dataset_root) ---
     // Read from stdin: uvarint(n) then n repetitions of (uvarint(len) || blob_bytes).

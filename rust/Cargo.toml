@@ -32,6 +32,14 @@ sha2 = "0.10"
 default = []
 zstd = ["dep:zstd"]  # Optional zstd compression
 
+[[example]]
+name = "recode"
+# recode is the cross-language conformance CLI (tools/run_all_gates.sh). The framed gate
+# compares gzip and zstd framing across implementations, so the zstd feature is required
+# rather than optional here: without it `--framed=zstd` answers "zstd feature not enabled"
+# and the gate sees an empty frame instead of a build failure.
+required-features = ["zstd"]
+
 [[bench]]
 name = "decode_bench"
 harness = false

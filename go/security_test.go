@@ -85,12 +85,13 @@ func TestSecurity_DecodeWithHintsDepthLimit(t *testing.T) {
 	buf.writeUvarint(1)          // 1 dictionary entry
 	buf.writeString("x")        // key "x"
 
-	// Emit 2000 nested objects, each with 1 field using dict key 0 ("x")
+	// Emit 2000 nested objects, each with 1 field using dict key 0 ("x").
+	// Strict §5.3: a 1-field object must use the FIXMAP tag (Object + uvarint(1)
+	// is well-formed but non-canonical).
 	depth := 2000
 	for i := 0; i < depth; i++ {
-		buf.writeByte(TagObject) // object tag
-		buf.writeUvarint(1)     // 1 field
-		buf.writeUvarint(0)     // field ID 0 = "x"
+		buf.writeByte(TagFixmapBase + 1) // FIXMAP(1)
+		buf.writeUvarint(0)              // field ID 0 = "x"
 	}
 	// Innermost value: null
 	buf.writeByte(TagNull)

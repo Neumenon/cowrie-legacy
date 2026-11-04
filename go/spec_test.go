@@ -99,7 +99,9 @@ func TestSpecCoreTags(t *testing.T) {
 		{"decimal128", NewDecimal128(2, [16]byte{}), 0x0A},
 		{"datetime64", Datetime64(0), 0x0B},
 		{"uuid128", UUID128([16]byte{}), 0x0C},
-		{"bigint", BigInt([]byte{1}), 0x0D},
+		// 2^64: the smallest value that fits neither Int nor Uint, so it is the smallest
+		// canonical BigInt (§5.3). A one-byte BigInt would encode as FIXINT.
+		{"bigint", BigInt([]byte{0, 0, 0, 0, 0, 0, 0, 0, 1}), 0x0D},
 	}
 
 	for _, tt := range tests {
@@ -335,7 +337,7 @@ func TestSpecRoundTrip(t *testing.T) {
 		{"bytes", Bytes([]byte{0x00, 0xFF, 0x42}), false},
 		{"datetime64", Datetime64(1732905600000000000), false},
 		{"uuid128", UUID128([16]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}), false},
-		{"bigint", BigInt([]byte{0x01, 0x02, 0x03}), false},
+		{"bigint", BigInt([]byte{0, 0, 0, 0, 0, 0, 0, 0, 1}), false}, // 2^64
 		{"array", Array(Int64(1), String("two"), Bool(true)), false},
 		{"object", Object(Member{Key: "a", Value: Int64(1)}, Member{Key: "b", Value: String("two")}), false},
 		{"tensor", Tensor(DTypeFloat32, []uint64{2, 3}, make([]byte, 24)), false},
@@ -351,7 +353,7 @@ func TestSpecRoundTrip(t *testing.T) {
 				t.Fatalf("encode error: %v", err)
 			}
 
-			decoded, err := Decode(data)
+			decoded, err := DecodeWithOptions(data, DecodeOptions{})
 			if tt.reserved {
 				if !errors.As(err, new(*TagError)) {
 					t.Fatalf("expected ERR_RESERVED_TAG (*TagError), got: %v", err)
@@ -502,10 +504,11 @@ func TestSecurityMalformedObjectCount(t *testing.T) {
 
 // TestSecurityDepthLimit tests that deeply nested structures are rejected.
 func TestSecurityDepthLimit(t *testing.T) {
-	// Create a payload with 2000 nested arrays
+	// Create a payload with 2000 nested FIXARRAY(1) arrays (strict §5.3 wants
+	// the FIXARRAY tag for counts <= 15); the innermost element is null.
 	buf := []byte{'C', 'O', 'W', 'R', 0x01, 0x00, 0x00} // Header + dict len
 	for i := 0; i < 2000; i++ {
-		buf = append(buf, 0x06, 0x01) // Array tag + count=1
+		buf = append(buf, TagFixarrayBase+1) // FIXARRAY(1): one element = next array
 	}
 	buf = append(buf, 0x00) // Null at the center
 
@@ -560,5 +563,39 @@ func TestSecurityTensorMalformedLength(t *testing.T) {
 	_, err := Decode(buf)
 	if err != ErrMalformedLength {
 		t.Errorf("expected ErrMalformedLength, got %v", err)
+	}
+}
+
+// TestSmallBigIntCoercesToInt pins the §5.3 number domain: the encoder must not emit a BigInt tag
+// for a value that has a smaller legal form, or the bytes are rejected by its own strict decoder.
+func TestSmallBigIntCoercesToInt(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  []byte
+		want *Value
+	}{
+		{"one", []byte{1}, Int64(1)},
+		{"zero", []byte{0}, Int64(0)},
+		{"minus one", []byte{0xff}, Int64(-1)},
+		{"2^63-1", []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f}, Int64(1<<63 - 1)},
+		{"2^63", []byte{0, 0, 0, 0, 0, 0, 0, 0x80, 0x00}, Uint64(1 << 63)}, // 9 bytes: 8 would be -2^63
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := Encode(BigInt(tc.raw))
+			if err != nil {
+				t.Fatalf("encode: %v", err)
+			}
+			want, err := Encode(tc.want)
+			if err != nil {
+				t.Fatalf("encode want: %v", err)
+			}
+			if string(got) != string(want) {
+				t.Fatalf("BigInt%v encoded to %x, want %x (the smaller legal form)", tc.raw, got, want)
+			}
+			if _, err := Decode(got); err != nil {
+				t.Fatalf("strict decode of our own output: %v", err)
+			}
+		})
 	}
 }

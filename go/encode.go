@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"math/big"
 	"sort"
 	"sync"
 )
@@ -275,34 +276,10 @@ func encodeValue(buf *buffer, v *Value, d *dict) error {
 		}
 
 	case TypeInt64:
-		// v3 inline encoding: FIXINT for 0-127, FIXNEG for -1 to -16
-		if v.int64Val >= 0 && v.int64Val <= 127 {
-			buf.writeByte(byte(TagFixintBase + v.int64Val))
-			return nil
-		}
-		if v.int64Val >= -16 && v.int64Val <= -1 {
-			buf.writeByte(byte(TagFixnegBase + (-1 - v.int64Val)))
-			return nil
-		}
-		buf.writeByte(TagInt64)
-		buf.writeUvarint(zigzagEncode(v.int64Val))
+		writeIntInto(buf, v.int64Val)
 
 	case TypeUint64:
-		// Canonical rule (mirrors tools/cowrie_ref number_domain): a uint that fits in
-		// i64 MUST be written as Int, otherwise we emit bytes our own strict decoder
-		// rejects as "uint fits Int".
-		if v.uint64Val <= math.MaxInt64 {
-			i := int64(v.uint64Val)
-			if i <= 127 {
-				buf.writeByte(byte(TagFixintBase + i))
-			} else {
-				buf.writeByte(TagInt64)
-				buf.writeUvarint(zigzagEncode(i))
-			}
-			return nil
-		}
-		buf.writeByte(TagUint64)
-		buf.writeUvarint(v.uint64Val)
+		writeUintInto(buf, v.uint64Val)
 
 	case TypeFloat64:
 		buf.writeByte(TagFloat64)
@@ -311,12 +288,7 @@ func encodeValue(buf *buffer, v *Value, d *dict) error {
 		buf.write(bits[:])
 
 	case TypeDecimal128:
-		// §2.3: Decimal128 scale is an SVARINT (zigzag + LEB128), NOT a raw int8
-		// byte. A raw byte desyncs the stream for |scale|>63 (e.g. scale 64 must be
-		// 80 01, not 0x40). Mirrors tools/cowrie_ref/encode.py encode_value Decimal.
-		buf.writeByte(TagDecimal128)
-		buf.writeUvarint(zigzagEncode(int64(v.decimal128.Scale)))
-		buf.write(v.decimal128.Coef[:])
+		writeDecimalInto(buf, v.decimal128.Scale, v.decimal128.Coef)
 
 	case TypeString:
 		buf.writeByte(TagString)
@@ -338,9 +310,7 @@ func encodeValue(buf *buffer, v *Value, d *dict) error {
 		buf.write(v.uuid128[:])
 
 	case TypeBigInt:
-		buf.writeByte(TagBigInt)
-		buf.writeUvarint(uint64(len(v.bigintVal)))
-		buf.write(v.bigintVal)
+		writeBigIntInto(buf, v.bigintVal)
 
 	case TypeArray:
 		// v3 inline encoding: FIXARRAY for length 0-15
@@ -820,4 +790,97 @@ func sortMembers(members []Member) {
 	sort.SliceStable(members, func(i, j int) bool {
 		return members[i].Key < members[j].Key
 	})
+}
+
+// decimalCanonical reduces a Decimal128 to lowest terms (§5.3): factors of ten move from the
+// coefficient into the scale, and a zero coefficient collapses to scale 0.
+func decimalCanonical(scale int32, coef [16]byte) (int32, [16]byte) {
+	c := bigIntFromLE(coef[:])
+	if c.Sign() == 0 {
+		return 0, [16]byte{}
+	}
+	ten := big.NewInt(10)
+	rem := new(big.Int)
+	for scale != math.MinInt32 {
+		q := new(big.Int)
+		q.QuoRem(c, ten, rem)
+		if rem.Sign() != 0 {
+			break
+		}
+		c = q
+		scale-- // c/10 x 10^-(s-1) == c x 10^-s
+	}
+	return scale, bigIntToLE16(c)
+}
+
+// bigIntToLE16 renders an integer as the 16-byte little-endian two's-complement Decimal128
+// coefficient (§2.3).
+func bigIntToLE16(c *big.Int) [16]byte {
+	var out [16]byte
+	v := new(big.Int).Set(c)
+	if v.Sign() < 0 {
+		v.Add(v, new(big.Int).Lsh(big.NewInt(1), 128))
+	}
+	b := v.Bytes() // big-endian magnitude
+	for i, j := 0, len(b)-1; j >= 0 && i < 16; i, j = i+1, j-1 {
+		out[i] = b[j]
+	}
+	return out
+}
+
+// ---- canonical number writers (§5.3) ----------------------------------------
+// Shared by the contiguous encoder (encodeValue) and the scatter-gather encoder
+// (collectSegments): one implementation, so the two paths cannot drift.
+
+// writeIntInto writes an int64 in its canonical form: FIXINT for 0..127, FIXNEG for -1..-16,
+// otherwise the INT64 tag with a zigzag varint.
+func writeIntInto(buf *buffer, v int64) {
+	if v >= 0 && v <= 127 {
+		buf.writeByte(byte(TagFixintBase + v))
+		return
+	}
+	if v >= -16 && v <= -1 {
+		buf.writeByte(byte(TagFixnegBase + (-1 - v)))
+		return
+	}
+	buf.writeByte(TagInt64)
+	buf.writeUvarint(zigzagEncode(v))
+}
+
+// writeUintInto writes a uint64 in its canonical form: a uint that fits i64 is an Int
+// (tools/cowrie_ref number_domain), otherwise the UINT64 tag.
+func writeUintInto(buf *buffer, u uint64) {
+	if u <= math.MaxInt64 {
+		writeIntInto(buf, int64(u))
+		return
+	}
+	buf.writeByte(TagUint64)
+	buf.writeUvarint(u)
+}
+
+// writeDecimalInto writes a Decimal128 in lowest terms (§5.3), scale as an SVARINT (§2.3).
+func writeDecimalInto(buf *buffer, scale int32, coef [16]byte) {
+	scale, coef = decimalCanonical(scale, coef)
+	buf.writeByte(TagDecimal128)
+	buf.writeUvarint(zigzagEncode(int64(scale)))
+	buf.write(coef[:])
+}
+
+// writeBigIntInto writes a BigInt, coercing to Int or Uint first when the value fits one of them
+// (a BigInt is only canonical for values that fit neither).
+func writeBigIntInto(buf *buffer, raw []byte) {
+	if c := bigIntFromLE(raw); c != nil {
+		if c.IsInt64() {
+			writeIntInto(buf, c.Int64())
+			return
+		}
+		if c.Sign() > 0 && c.BitLen() <= 64 {
+			buf.writeByte(TagUint64)
+			buf.writeUvarint(c.Uint64())
+			return
+		}
+	}
+	buf.writeByte(TagBigInt)
+	buf.writeUvarint(uint64(len(raw)))
+	buf.write(raw)
 }

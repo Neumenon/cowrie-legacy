@@ -38,7 +38,7 @@ func TestEncodeToWriter_AllValueTypes(t *testing.T) {
 			t.Errorf("case %d: EncodeToWriter: %v", i, err)
 			continue
 		}
-		decoded, err := Decode(buf.Bytes())
+		decoded, err := Decode(buf.Bytes()) // strict: the encoder must emit canonical bytes for every type
 		if err != nil {
 			t.Errorf("case %d: Decode: %v", i, err)
 		}
@@ -66,7 +66,7 @@ func TestEncodeToWriter_Containers(t *testing.T) {
 	if err := EncodeToWriter(&buf, v); err != nil {
 		t.Fatal(err)
 	}
-	decoded, err := Decode(buf.Bytes())
+	decoded, err := Decode(buf.Bytes()) // strict: the encoder must emit canonical bytes for every type
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestEncodeToWriter_TensorScatter(t *testing.T) {
 	if err := EncodeToWriter(&buf, td); err != nil {
 		t.Fatal(err)
 	}
-	decoded, err := Decode(buf.Bytes())
+	decoded, err := Decode(buf.Bytes()) // strict: the encoder must emit canonical bytes for every type
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func TestEncodeToWriter_NestedArray(t *testing.T) {
 	if err := EncodeToWriter(&buf, v); err != nil {
 		t.Fatal(err)
 	}
-	decoded, err := Decode(buf.Bytes())
+	decoded, err := Decode(buf.Bytes()) // strict: the encoder must emit canonical bytes for every type
 	if err != nil {
 		t.Fatal(err)
 	}

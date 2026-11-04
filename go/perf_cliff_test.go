@@ -38,7 +38,7 @@ func TestPerfCliff_DeepNesting(t *testing.T) {
 				t.Fatalf("Encode depth=%d failed: %v", depth, err)
 			}
 
-			_, err = Decode(data)
+			_, err = DecodeWithOptions(data, DecodeOptions{}) // wide-object fixture encodes duplicate keys; strict is gated elsewhere
 			if err != nil {
 				t.Fatalf("Decode depth=%d failed: %v", depth, err)
 			}
@@ -76,7 +76,7 @@ func TestPerfCliff_WideObject(t *testing.T) {
 				t.Fatalf("Encode size=%d failed: %v", size, err)
 			}
 
-			_, err = Decode(data)
+			_, err = DecodeWithOptions(data, DecodeOptions{}) // wide-object fixture encodes duplicate keys; strict is gated elsewhere
 			if err != nil {
 				t.Fatalf("Decode size=%d failed: %v", size, err)
 			}
@@ -108,7 +108,7 @@ func TestPerfCliff_WideArray(t *testing.T) {
 				t.Fatalf("Encode size=%d failed: %v", size, err)
 			}
 
-			_, err = Decode(data)
+			_, err = DecodeWithOptions(data, DecodeOptions{}) // wide-object fixture encodes duplicate keys; strict is gated elsewhere
 			if err != nil {
 				t.Fatalf("Decode size=%d failed: %v", size, err)
 			}
