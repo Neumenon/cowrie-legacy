@@ -189,8 +189,9 @@ fn encode_value(
             buf.extend_from_slice(&bytes);
         }
         Value::Decimal(data) => {
+            // §5.3: reduce to lowest terms; an unreduced coefficient is not canonical.
             buf.push(tags::DECIMAL128);
-            buf.extend_from_slice(data);
+            buf.extend_from_slice(&decimal_canonical(data));
         }
         Value::String(s) => {
             buf.push(tags::STRING);
@@ -210,9 +211,18 @@ fn encode_value(
             buf.extend_from_slice(uuid);
         }
         Value::BigInt(data) => {
-            buf.push(tags::BIGINT);
-            write_uvarint(buf, data.len() as u64);
-            buf.extend_from_slice(data);
+            // §5.3 canonical number domain: a BigInt is only for values that fit neither Int nor
+            // Uint. Coerce, so the encoder cannot emit bytes its own strict decoder rejects.
+            match bigint_canonical(data) {
+                Some(v @ Value::Int(_)) | Some(v @ Value::Uint(_)) => {
+                    encode_value(buf, &v, dict, opts)?;
+                }
+                _ => {
+                    buf.push(tags::BIGINT);
+                    write_uvarint(buf, data.len() as u64);
+                    buf.extend_from_slice(data);
+                }
+            }
         }
         Value::Array(arr) => {
             let len = arr.len();
@@ -495,4 +505,73 @@ mod tests {
         assert_eq!(zigzag_encode(-2), 3);
         assert_eq!(zigzag_encode(2), 4);
     }
+}
+
+// ---- canonical number helpers (§5.3) -----------------------------------------
+
+/// Interpret little-endian two's-complement bytes and return the smaller legal form, if the value
+/// fits Int or Uint. `None` means the BigInt tag is correct.
+fn bigint_canonical(data: &[u8]) -> Option<Value> {
+    if data.is_empty() || data.len() > 16 {
+        return None;
+    }
+    let mut buf = [0u8; 16];
+    buf[..data.len()].copy_from_slice(data);
+    let raw = i128::from_le_bytes(buf);
+    // sign-extend from the top bit of the last supplied byte
+    let shift = ((16 - data.len()) * 8) as u32;
+    let v = (raw << shift) >> shift;
+    if v >= i64::MIN as i128 && v <= i64::MAX as i128 {
+        return Some(Value::Int(v as i64));
+    }
+    if v > 0 && v <= u64::MAX as i128 {
+        return Some(Value::Uint(v as u64));
+    }
+    None
+}
+
+/// Reduce a Decimal128 to lowest terms. The wire form is varint(zigzag(scale)) + 16-byte
+/// little-endian coefficient; anything that is not exactly that shape is passed through untouched.
+fn decimal_canonical(data: &[u8]) -> Vec<u8> {
+    let (scale, pos) = match parse_scale(data) {
+        Some(x) => x,
+        None => return data.to_vec(),
+    };
+    if data.len() != pos + 16 {
+        return data.to_vec();
+    }
+    let mut cb = [0u8; 16];
+    cb.copy_from_slice(&data[pos..]);
+    let mut c = i128::from_le_bytes(cb);
+    let mut s = scale;
+    if c == 0 {
+        s = 0;
+    } else {
+        while c % 10 == 0 {
+            c /= 10;
+            s -= 1; // c/10 * 10^-(s-1) == c * 10^-s
+        }
+    }
+    let mut out = Vec::with_capacity(17);
+    write_uvarint(&mut out, zigzag_encode(s));
+    out.extend_from_slice(&c.to_le_bytes());
+    out
+}
+
+/// Parse a leading svarint (varint + zigzag) and return (value, bytes consumed).
+fn parse_scale(data: &[u8]) -> Option<(i64, usize)> {
+    let mut raw: u64 = 0;
+    let mut shift: u32 = 0;
+    for (i, b) in data.iter().enumerate() {
+        raw |= ((b & 0x7f) as u64) << shift;
+        if b & 0x80 == 0 {
+            let z = raw;
+            return Some((((z >> 1) as i64) ^ -((z & 1) as i64), i + 1));
+        }
+        shift += 7;
+        if shift >= 64 {
+            return None;
+        }
+    }
+    None
 }

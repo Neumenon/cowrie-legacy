@@ -168,11 +168,20 @@ fn roundtrip_uuid() {
 
 #[test]
 fn roundtrip_bigint() {
-    let data = vec![0x01, 0x02, 0x03, 0xFF];
+    // 2^64: the smallest value that fits neither Int nor Uint, so the BigInt tag is canonical.
+    let data = vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01];
     let v = Value::BigInt(data.clone());
     let enc = encode(&v).unwrap();
     let dec = decode(&enc).unwrap();
     assert_eq!(dec, Value::BigInt(data));
+}
+
+#[test]
+fn small_bigint_coerces_to_int() {
+    // §5.3 number domain: [0x01, 0x02, 0x03, 0xFF] is -16580095, which has a smaller legal form.
+    let data = vec![0x01, 0x02, 0x03, 0xFF];
+    let enc = encode(&Value::BigInt(data)).unwrap();
+    assert_eq!(decode(&enc).unwrap(), Value::Int(-16580095));
 }
 
 #[test]

@@ -504,59 +504,37 @@ function formatUUID(bytes: Uint8Array): string {
 }
 
 function bigintToBytes(n: bigint): Uint8Array {
+  // The wire coefficient is LITTLE-endian two's complement (§2.3). Building it big-endian here
+  // made SJ.bigint(2n ** 64n) encode a value of 1: same length, reversed bytes, no error anywhere.
   if (n === 0n) return new Uint8Array([0]);
-  const negative = n < 0n;
-  if (negative) n = -n;
-
+  const neg = n < 0n;
+  let v = neg ? -n : n;
   const bytes: number[] = [];
-  while (n > 0n) {
-    bytes.unshift(Number(n & 0xffn));
-    n >>= 8n;
+  while (v > 0n) {
+    bytes.push(Number(v & 0xffn));
+    v >>= 8n;
   }
-
-  // Two's complement for negative
-  if (negative) {
+  if (neg) {
     let carry = 1;
-    for (let i = bytes.length - 1; i >= 0; i--) {
-      bytes[i] = ~bytes[i] & 0xff;
-      bytes[i] += carry;
+    for (let i = 0; i < bytes.length; i++) {
+      bytes[i] = (~bytes[i] & 0xff) + carry;
       carry = bytes[i] > 0xff ? 1 : 0;
       bytes[i] &= 0xff;
     }
-    if (carry) bytes.unshift(0xff);
-    if ((bytes[0] & 0x80) === 0) bytes.unshift(0xff);
-  } else if (bytes[0] & 0x80) {
-    bytes.unshift(0);
+    if ((bytes[bytes.length - 1] & 0x80) === 0) bytes.push(0xff);
+  } else if (bytes[bytes.length - 1] & 0x80) {
+    bytes.push(0x00);
   }
-
   return new Uint8Array(bytes);
 }
 
 function bytesToBigint(bytes: Uint8Array): bigint {
+  // little-endian two's complement — the wire order (§2.3)
   if (bytes.length === 0) return 0n;
-  const negative = (bytes[0] & 0x80) !== 0;
-  let result = 0n;
-
-  if (negative) {
-    // Two's complement
-    const inverted = new Uint8Array(bytes.length);
-    let carry = 1;
-    for (let i = bytes.length - 1; i >= 0; i--) {
-      inverted[i] = ~bytes[i] & 0xff;
-      inverted[i] += carry;
-      carry = inverted[i] > 0xff ? 1 : 0;
-      inverted[i] &= 0xff;
-    }
-    for (const b of inverted) {
-      result = (result << 8n) | BigInt(b);
-    }
-    return -result;
-  }
-
-  for (const b of bytes) {
-    result = (result << 8n) | BigInt(b);
-  }
-  return result;
+  let v = 0n;
+  for (let i = bytes.length - 1; i >= 0; i--) v = (v << 8n) | BigInt(bytes[i]);
+  if (bytes[bytes.length - 1] & 0x80) v -= 1n << BigInt(8 * bytes.length);
+  return v;
 }
 
 // Varint encoding/decoding
@@ -669,6 +647,62 @@ function tensorExpectedBytes(dtype: number, shape: number[]): number | null {
 }
 
 // Encoder
+// ---- §5.3 canonical number forms, shared by Encoder and DeterministicEncoder ----------------
+interface NumForm {
+  tag: number;
+  /** varint payload, when the tag needs one */
+  varint?: bigint;
+  /** raw bytes payload, when the tag needs one (BigInt) */
+  bytes?: Uint8Array;
+}
+
+/** FIXINT / FIXNEG / INT64 for an int64. */
+function intForm(n: bigint): NumForm {
+  if (n >= 0n && n <= 127n) return { tag: Tag.FIXINT_BASE + Number(n) };
+  if (n >= -16n && n <= -1n) return { tag: Tag.FIXNEG_BASE + Number(-1n - n) };
+  return { tag: Tag.INT64, varint: zigzagEncode(n) };
+}
+
+/** §5.3 (number_domain): a uint that fits i64 is an Int; only larger values use UINT64. */
+function uintForm(u: bigint): NumForm {
+  if (u < 0n || u > 0xFFFFFFFFFFFFFFFFn) {
+    throw new RangeError(`UINT64 value out of range: ${u} (must be 0..2^64-1)`);
+  }
+  if (u <= 0x7FFFFFFFFFFFFFFFn) return intForm(u);
+  return { tag: Tag.UINT64, varint: u };
+}
+
+/** §5.3: a BigInt is only canonical for values that fit neither Int nor Uint. */
+function bigintForm(bytes: Uint8Array): NumForm {
+  const v = bytesToBigintLESigned(bytes);
+  if (v >= -(2n ** 63n) && v <= 2n ** 63n - 1n) return intForm(v);
+  if (v > 0n && v <= 0xFFFFFFFFFFFFFFFFn) return { tag: Tag.UINT64, varint: v };
+  return { tag: Tag.BIGINT, bytes };
+}
+
+/** §5.3: a Decimal128 coefficient must be in lowest terms. */
+function decimalCanonical(scale: number, coef: Uint8Array): { scale: number; coef: Uint8Array } {
+  const c = new Uint8Array(16);
+  c.set(coef.subarray(0, 16));
+  let v = bytesToBigintLESigned(c);
+  let s = scale;
+  if (v === 0n) {
+    s = 0;
+  } else {
+    while (v % 10n === 0n) {
+      v /= 10n;
+      s -= 1; // c/10 * 10^-(s-1) == c * 10^-s
+    }
+  }
+  const out = new Uint8Array(16);
+  let x = v < 0n ? v + (1n << 128n) : v;
+  for (let i = 0; i < 16; i++) {
+    out[i] = Number(x & 0xffn);
+    x >>= 8n;
+  }
+  return { scale: s, coef: out };
+}
+
 class Encoder {
   private buf: number[] = [];
   private dictKeys: string[] = [];
@@ -762,12 +796,9 @@ class Encoder {
         break;
       }
       case Type.UINT64: {
-        const u64 = v.data as bigint;
-        if (u64 < 0n || u64 > 0xFFFFFFFFFFFFFFFFn) {
-          throw new RangeError(`UINT64 value out of range: ${u64} (must be 0..2^64-1)`);
-        }
-        this.writeByte(Tag.UINT64);
-        this.writeUvarint(u64);
+        const f = uintForm(v.data as bigint);
+        this.writeByte(f.tag);
+        if (f.varint !== undefined) this.writeUvarint(f.varint);
         break;
       }
       case Type.FLOAT64: {
@@ -777,11 +808,12 @@ class Encoder {
       }
       case Type.DECIMAL128: {
         const d = v.data as Decimal128;
+        const red = decimalCanonical(d.scale, d.coef); // §5.3 lowest terms
         this.writeByte(Tag.DECIMAL128);
         // §2.3: scale is a SVARINT (zigzag + LEB128), NOT a raw int8 byte. A raw byte
         // desyncs the stream for |scale| > 63 (mirrors cowrie_ref encode.py:60).
-        this.write(encodeUvarint(zigzagEncode(BigInt(d.scale))));
-        this.write(d.coef);
+        this.write(encodeUvarint(zigzagEncode(BigInt(red.scale))));
+        this.write(red.coef);
         break;
       }
       case Type.STRING:
@@ -807,10 +839,13 @@ class Encoder {
         this.write(v.data as Uint8Array);
         break;
       case Type.BIGINT: {
-        const bytes = v.data as Uint8Array;
-        this.writeByte(Tag.BIGINT);
-        this.writeUvarint(bytes.length);
-        this.write(bytes);
+        const f = bigintForm(v.data as Uint8Array); // §5.3 number domain
+        this.writeByte(f.tag);
+        if (f.varint !== undefined) this.writeUvarint(f.varint);
+        else if (f.bytes) {
+          this.writeUvarint(f.bytes.length);
+          this.write(f.bytes);
+        }
         break;
       }
       case Type.UNKNOWN_EXT: {
@@ -2418,12 +2453,9 @@ class DeterministicEncoder extends Encoder {
         break;
       }
       case Type.UINT64: {
-        const u64 = v.data as bigint;
-        if (u64 < 0n || u64 > 0xFFFFFFFFFFFFFFFFn) {
-          throw new RangeError(`UINT64 value out of range: ${u64} (must be 0..2^64-1)`);
-        }
-        this.writeByteSorted(Tag.UINT64);
-        this.writeUvarintSorted(u64);
+        const f = uintForm(v.data as bigint);
+        this.writeByteSorted(f.tag);
+        if (f.varint !== undefined) this.writeUvarintSorted(f.varint);
         break;
       }
       case Type.FLOAT64: {
@@ -2433,12 +2465,13 @@ class DeterministicEncoder extends Encoder {
       }
       case Type.DECIMAL128: {
         const d = v.data as Decimal128;
+        const red = decimalCanonical(d.scale, d.coef); // §5.3 lowest terms
         this.writeByteSorted(Tag.DECIMAL128);
         // §2.3: scale is a SVARINT (zigzag + LEB128), NOT a raw int8 byte. A raw byte
         // desyncs the stream for |scale| > 63 and diverges from the main encoder
         // (index.ts:777) and cowrie_ref encode.py:60.
-        this.writeUvarintSorted(zigzagEncode(BigInt(d.scale)));
-        this.writeSorted(d.coef);
+        this.writeUvarintSorted(zigzagEncode(BigInt(red.scale)));
+        this.writeSorted(red.coef);
         break;
       }
       case Type.STRING:
@@ -2464,10 +2497,13 @@ class DeterministicEncoder extends Encoder {
         this.writeSorted(v.data as Uint8Array);
         break;
       case Type.BIGINT: {
-        const bytes = v.data as Uint8Array;
-        this.writeByteSorted(Tag.BIGINT);
-        this.writeUvarintSorted(bytes.length);
-        this.writeSorted(bytes);
+        const f = bigintForm(v.data as Uint8Array); // §5.3 number domain
+        this.writeByteSorted(f.tag);
+        if (f.varint !== undefined) this.writeUvarintSorted(f.varint);
+        else if (f.bytes) {
+          this.writeUvarintSorted(f.bytes.length);
+          this.writeSorted(f.bytes);
+        }
         break;
       }
       case Type.ARRAY: {

@@ -191,7 +191,7 @@ The answer here is an **oracle**:
         byte-identical, or the build is red
 ```
 
-Thirteen gates run on every push, and one red gate blocks merge:
+Fourteen gates run on every push, and one red gate blocks merge:
 
 | gate | what it proves |
 |---|---|
@@ -208,23 +208,24 @@ Thirteen gates run on every push, and one red gate blocks merge:
 | `negative --strict` | the same 29 rejected with the *exact* expected `ERR_*` code |
 | `fuzz_differential` | 150 random values: Go/Rust/TS byte-identical to the oracle after decode → re-encode |
 | `law_bytes` | **both halves**: 73 canonical controls must be accepted unchanged, and 511 mutated encodings must be rejected or echoed unchanged — a strict decoder may never accept bytes and return different ones |
+| `constructor` | 18 values **built in code** in each implementation encode to the oracle's exact bytes — the only gate that tests encoders rather than decoders |
 
 ```bash
 bash tools/run_all_gates.sh     # the only command that matters
 ```
 
-**What this suite does not cover.** Every cross-language gate above feeds an implementation bytes it
-already produced or received — decode, then re-encode, then compare. That proves the *decoders*
-agree. It does not prove the *encoders* agree, because a value constructed in code never reaches
-the wire in three of the four implementations. Concretely, at 0.9.0:
+**Why `constructor` exists.** Through 0.9.0 every cross-language gate fed an implementation bytes
+it already had — decode, then re-encode, then compare. That proves the *decoders* agree and says
+nothing about the *encoders*, because in Go, Rust and TypeScript a value built in code never
+otherwise reaches the wire. Three defects lived behind that blind spot at once: TypeScript wrote
+`bigint` coefficients big-endian (so `SJ.bigint(2^64)` encoded a value of 1), and neither Rust nor
+TypeScript coerced a BigInt that fits Int/Uint or reduced a Decimal128 to lowest terms. All four
+implementations now agree on every constructed value in the gate's corpus.
 
-- TypeScript converts a `bigint` to bytes **big-endian**, so `SJ.bigint(2^64)` encodes a value of 1;
-- Rust and TypeScript write a BigInt that fits Int/Uint as a BigInt anyway (§5.3 forbids it);
-- Rust and TypeScript write an unreduced Decimal128 coefficient, and Rust's `Decimal(Vec<u8>)`
-  takes the raw wire scale rather than a scale number.
-
-Python and Go are byte-identical for every constructed value tested. A constructor gate — build the
-same value in all four languages, compare to the oracle — is the missing half.
+Two limits remain. Rust's `Value::Decimal(Vec<u8>)` and `Value::BigInt(Vec<u8>)` still carry raw
+wire bytes, so the caller builds them by hand — the encoder canonicalises them, but the API does not
+express the intent. And 18 cases is a corpus, not a proof: the gate catches drift on the shapes it
+lists, not on shapes nobody thought of.
 
 The error *codes* are part of the ABI. `ERR_NON_CANONICAL`, `ERR_RESERVED_TAG`,
 `ERR_DUPLICATE_KEY` — the message is free text, the code is law, and all four implementations must

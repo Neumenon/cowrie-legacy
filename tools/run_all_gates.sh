@@ -15,6 +15,7 @@
 #   (d) negative gate (--strict)     (strict decoders must reject non-canonical)
 #   (e) differential fuzz (150)      (generative cross-lang determinism)
 #   (f) byte-space law               (strict-accepted bytes must BE canonical; mutated corpus)
+#   (g) constructor parity           (the same value built in code encodes identically, 4 langs)
 #
 # Usage:  bash tools/run_all_gates.sh
 set -euo pipefail
@@ -120,9 +121,14 @@ run "fuzz_differential 150" "${PY}" tools/fuzz_differential.py 150
 #     A strict decoder may reject or echo the input; echoing DIFFERENT bytes is the bug.
 run "law_bytes 6" "${PY}" tools/law_bytes_gate.py 6
 
+# (g) Constructor parity: the same value BUILT IN CODE must encode to the oracle's bytes.
+#     Every other cross-language gate feeds an implementation bytes it already had
+#     (decode -> re-encode), which tests decoders and never encoders.
+run "constructor" "${PY}" tools/constructor_gate.py
+
 echo ""
 echo "=============================================================="
 echo " ✅✅✅  ALL GATES PASS  ✅✅✅"
-echo "   pytest · conformance · content-address · file-identity · tensor-view · fingerprint · dataset · negative · negative --strict · fuzz · law"
+echo "   pytest · conformance · content-address · file-identity · tensor-view · fingerprint · dataset · negative · negative --strict · fuzz · law · constructor"
 echo "=============================================================="
 exit 0

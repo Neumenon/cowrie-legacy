@@ -134,8 +134,9 @@ describe('gen2 encode/decode roundtrip: primitives', () => {
   });
 
   it('uint64 zero', () => {
+    // §5.3 number domain: a uint that fits Int is written as an Int, so it reads back as one.
     const v = roundtrip(SJ.uint64(0));
-    assert.strictEqual(v.type, Type.UINT64);
+    assert.strictEqual(v.type, Type.INT64);
     assert.strictEqual(v.data, 0n);
   });
 
@@ -245,20 +246,24 @@ describe('gen2 encode/decode roundtrip: primitives', () => {
   });
 
   it('bigint zero', () => {
+    // §5.3: a BigInt is only for values that fit neither Int nor Uint.
     const v = roundtrip(SJ.bigint(0n));
-    assert.strictEqual(v.type, Type.BIGINT);
+    assert.strictEqual(v.type, Type.INT64);
+    assert.strictEqual(v.data, 0n);
   });
 
   it('bigint negative', () => {
     const v = roundtrip(SJ.bigint(-42n));
-    assert.strictEqual(v.type, Type.BIGINT);
+    assert.strictEqual(v.type, Type.INT64);
+    assert.strictEqual(v.data, -42n);
   });
 
   it('bigint from bytes', () => {
+    // little-endian (§2.3): [0x00, 0x01, 0x02] is 0x020100 = 131328, which fits Int
     const bytes = new Uint8Array([0x00, 0x01, 0x02]);
     const v = roundtrip(SJ.bigint(bytes));
-    assert.strictEqual(v.type, Type.BIGINT);
-    assert.deepStrictEqual(v.data, bytes);
+    assert.strictEqual(v.type, Type.INT64);
+    assert.strictEqual(v.data, 131328n);
   });
 });
 
@@ -597,14 +602,14 @@ describe('gen2 JSON bridge', () => {
 
   it('toAny decimal128 scale=0', () => {
     const coef = new Uint8Array(16);
-    coef[15] = 5;
+    coef[0] = 5; // little-endian (§2.3)
     const result = toAny(SJ.decimal128(0, coef));
     assert.strictEqual(result, '5');
   });
 
   it('toAny decimal128 large scale', () => {
     const coef = new Uint8Array(16);
-    coef[15] = 1;
+    coef[0] = 1; // little-endian (§2.3)
     // scale >= str.length
     const result = toAny(SJ.decimal128(3, coef));
     assert.strictEqual(result, '0.001');
@@ -612,7 +617,7 @@ describe('gen2 JSON bridge', () => {
 
   it('toAny decimal128 negative scale', () => {
     const coef = new Uint8Array(16);
-    coef[15] = 5;
+    coef[0] = 5; // little-endian (§2.3)
     const result = toAny(SJ.decimal128(-2, coef));
     assert.strictEqual(result, '500');
   });
@@ -857,7 +862,7 @@ describe('gen2 deterministic encoding', () => {
     const decoded = decode(enc);
     const obj = decoded.data as Record<string, Value>;
     assert.strictEqual(obj['u'].data, 999n);
-    assert.strictEqual(obj['u'].type, Type.UINT64);
+    assert.strictEqual(obj['u'].type, Type.INT64); // §5.3: 999 fits Int
   });
 });
 

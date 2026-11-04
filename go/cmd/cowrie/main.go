@@ -28,6 +28,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -48,6 +49,8 @@ func main() {
 		decodeCmd(os.Args[2:])
 	case "recode":
 		recodeCmd(os.Args[2:])
+	case "cases":
+		casesCmd()
 	case "info":
 		infoCmd(os.Args[2:])
 	case "help", "-h", "--help":
@@ -447,5 +450,50 @@ func infoCmd(args []string) {
 		fmt.Println("Format: Unknown")
 		fmt.Printf("Size: %d bytes\n", len(input))
 		fmt.Printf("First bytes: %02x %02x %02x %02x\n", input[0], input[1], input[2], input[3])
+	}
+}
+
+// casesCmd prints the constructor-gate cases: build each value in code, encode it, print
+// name<TAB>hex. tools/constructor_gate.py compares the output to the Python reference, so a
+// value constructed in Go that does not match the oracle fails the gate.
+func casesCmd() {
+	dec := func(scale int32, c0 byte) *cowrie.Value {
+		var a [16]byte
+		a[0] = c0
+		return cowrie.NewDecimal128(scale, a)
+	}
+	cases := []struct {
+		name string
+		v    *cowrie.Value
+	}{
+		{"null", cowrie.Null()},
+		{"bool_true", cowrie.Bool(true)},
+		{"int_5", cowrie.Int64(5)},
+		{"int_neg17", cowrie.Int64(-17)},
+		{"int_127", cowrie.Int64(127)},
+		{"uint_42", cowrie.Uint64(42)},
+		{"uint_2p63", cowrie.Uint64(1 << 63)},
+		{"bigint_1", cowrie.BigInt([]byte{1})},
+		{"bigint_2p64", cowrie.BigInt([]byte{0, 0, 0, 0, 0, 0, 0, 0, 1})},
+		{"dec_2_150", dec(2, 150)},
+		{"dec_2_42", dec(2, 42)},
+		{"float_nan", cowrie.Float64(math.NaN())},
+		{"float_negzero", cowrie.Float64(math.Copysign(0, -1))},
+		{"str_unicode", cowrie.String("h\u00e9llo")},
+		{"bytes", cowrie.Bytes([]byte{0, 1, 2})},
+		{"dt_neg", cowrie.Datetime64(-1)},
+		{"arr", cowrie.Array(cowrie.Int64(1), cowrie.Int64(2), cowrie.Int64(3))},
+		{"obj", cowrie.Object(
+			cowrie.Member{Key: "a", Value: cowrie.Int64(1)},
+			cowrie.Member{Key: "b", Value: cowrie.Int64(2)},
+		)},
+	}
+	for _, c := range cases {
+		b, err := cowrie.Encode(c.v)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s: %v\n", c.name, err)
+			os.Exit(1)
+		}
+		fmt.Printf("%s\t%s\n", c.name, hex.EncodeToString(b))
 	}
 }

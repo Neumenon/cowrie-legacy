@@ -684,19 +684,19 @@ test("bigint -128 encodes as 0x80 (minimal, no extra 0xff prefix)", () => {
   }
 });
 
-test("bigint -256 encodes as [0xff, 0x00]", () => {
+test("bigint -256 encodes as [0x00, 0xff] (little-endian two's complement, §2.3)", () => {
   const v = SJ.bigint(-256n);
-  const b = v.data as Uint8Array;
-  if (b.length !== 2 || b[0] !== 0xff || b[1] !== 0x00) {
-    throw new Error(`Expected [0xff, 0x00], got [${Array.from(b).map(x => x.toString(16)).join(',')}]`);
-  }
-});
-
-test("bigint 255 encodes as [0x00, 0xff] (top bit guard)", () => {
-  const v = SJ.bigint(255n);
   const b = v.data as Uint8Array;
   if (b.length !== 2 || b[0] !== 0x00 || b[1] !== 0xff) {
     throw new Error(`Expected [0x00, 0xff], got [${Array.from(b).map(x => x.toString(16)).join(',')}]`);
+  }
+});
+
+test("bigint 255 encodes as [0xff, 0x00] (little-endian, sign-guard byte on top)", () => {
+  const v = SJ.bigint(255n);
+  const b = v.data as Uint8Array;
+  if (b.length !== 2 || b[0] !== 0xff || b[1] !== 0x00) {
+    throw new Error(`Expected [0xff, 0x00], got [${Array.from(b).map(x => x.toString(16)).join(',')}]`);
   }
 });
 
@@ -706,24 +706,10 @@ test("bigint large negative roundtrip", () => {
   const decoded = decode(encoded);
   // Re-derive bigint from stored bytes using bytesToBigint logic
   const bytes = decoded.data as Uint8Array;
-  const neg = (bytes[0] & 0x80) !== 0;
-  let result: bigint;
-  if (neg) {
-    const inv = new Uint8Array(bytes.length);
-    let carry = 1;
-    for (let i = bytes.length - 1; i >= 0; i--) {
-      inv[i] = (~bytes[i]) & 0xff;
-      inv[i] += carry;
-      carry = inv[i] > 0xff ? 1 : 0;
-      inv[i] &= 0xff;
-    }
-    let mag = 0n;
-    for (const b of inv) mag = (mag << 8n) | BigInt(b);
-    result = -mag;
-  } else {
-    result = 0n;
-    for (const b of bytes) result = (result << 8n) | BigInt(b);
-  }
+  // little-endian two's complement, the wire order (§2.3)
+  let result = 0n;
+  for (let i = bytes.length - 1; i >= 0; i--) result = (result << 8n) | BigInt(bytes[i]);
+  if (bytes[bytes.length - 1] & 0x80) result -= 1n << BigInt(8 * bytes.length);
   if (result !== n) {
     throw new Error(`Large negative bigint roundtrip failed: expected ${n}, got ${result}`);
   }

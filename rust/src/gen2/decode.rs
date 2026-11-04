@@ -1163,47 +1163,42 @@ mod tests {
 
     #[test]
     fn test_bigint_twos_complement_roundtrip() {
-        // Known two's-complement big-endian encodings:
-        //   0          → [0x00]
-        //   1          → [0x01]
-        //   127        → [0x7F]
-        //   128        → [0x00, 0x80]  (needs sign byte so it isn't read as negative)
-        //   255        → [0x00, 0xFF]
-        //   -1         → [0xFF]
-        //   -128       → [0x80]
-        //   -129       → [0xFF, 0x7F]
-        //   -256       → [0xFF, 0x00]
-        //  large negative (-2^63) → [0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
-        let cases: Vec<(&str, Vec<u8>)> = vec![
-            ("zero", vec![0x00]),
-            ("one", vec![0x01]),
-            ("127", vec![0x7F]),
-            ("128", vec![0x00, 0x80]),
-            ("255", vec![0x00, 0xFF]),
-            ("-1", vec![0xFF]),
-            ("-128", vec![0x80]),
-            ("-129", vec![0xFF, 0x7F]),
-            ("-256", vec![0xFF, 0x00]),
+        // Little-endian two's-complement (§2.3), and the §5.3 number domain: a BigInt is
+        // only canonical for values that fit neither Int nor Uint, so encoding one that fits
+        // yields the smaller form and decoding returns that.
+        //   0 -> [0x00]        128 -> [0x80, 0x00]        -1 -> [0xFF]
+        //   1 -> [0x01]        255 -> [0xFF, 0x00]      -128 -> [0x80]
+        // 127 -> [0x7F]       -129 -> [0x7F, 0xFF]     -256 -> [0x00, 0xFF]
+        let cases: Vec<(&str, Vec<u8>, Value)> = vec![
+            ("zero", vec![0x00], Value::Int(0)),
+            ("one", vec![0x01], Value::Int(1)),
+            ("127", vec![0x7F], Value::Int(127)),
+            ("128", vec![0x80, 0x00], Value::Int(128)),
+            ("255", vec![0xFF, 0x00], Value::Int(255)),
+            ("-1", vec![0xFF], Value::Int(-1)),
+            ("-128", vec![0x80], Value::Int(-128)),
+            ("-129", vec![0x7F, 0xFF], Value::Int(-129)),
+            ("-256", vec![0x00, 0xFF], Value::Int(-256)),
             (
                 "-2^63",
-                vec![0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+                vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80],
+                Value::Int(i64::MIN),
             ),
+            // 2^64 is the smallest value that fits neither Int nor Uint, so it stays a BigInt.
             (
-                "large-pos",
-                vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+                "2^64",
+                vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01],
+                Value::BigInt(vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01]),
             ),
         ];
 
-        for (label, bytes) in cases {
-            let val = Value::BigInt(bytes.clone());
+        for (label, bytes, want) in cases {
+            let val = Value::BigInt(bytes);
             let encoded = encode(&val).unwrap_or_else(|_| panic!("encode {}", label));
             let decoded = decode(&encoded).unwrap_or_else(|_| panic!("decode {}", label));
-            assert_eq!(
-                decoded,
-                Value::BigInt(bytes),
-                "round-trip failed for {}",
-                label
-            );
+            assert_eq!(decoded, want, "number domain failed for {}", label);
+            super::decode_strict(&encoded)
+                .unwrap_or_else(|_| panic!("strict decode of our own output: {}", label));
         }
     }
 

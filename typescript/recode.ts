@@ -13,7 +13,7 @@
 //   --file-id     : decode+verify, print the merkle_root as one line of lowercase hex (68 chars).
 //   --file-recode : decode, RE-ENCODE the file, write raw bytes to stdout (reproduces input
 //                   byte-for-byte for canonical files).
-import { encode, decode, encodeFramed, decodeFramed, addressOfBytes, decodeFile, encodeFile, fileIdentity, tensorSpans, schemaFingerprint64, merkleRoot, Compression } from "./src/gen2/index";
+import { encode, decode, encodeFramed, decodeFramed, addressOfBytes, decodeFile, encodeFile, fileIdentity, tensorSpans, schemaFingerprint64, merkleRoot, Compression, SJ } from "./src/gen2/index";
 
 const strict = process.argv.includes("--strict") || process.env.STRICT === "1";
 // Dataset/stream layer Merkle root (SPEC-v1 §7 dataset_root): read uvarint(n) then n
@@ -30,6 +30,39 @@ const fingerprint = process.argv.includes("--fingerprint");
 // §2.2 framed composite mode: canonical stdin -> framed stdout (gzip|zstd|none).
 const framedArg = process.argv.find((a) => a.startsWith("--framed="));
 const framedMode = framedArg ? framedArg.split("=", 2)[1] : null;
+
+// --- constructor-gate cases: build each value in code and print name<TAB>hex ----------------
+if (process.argv.includes("--cases")) {
+  const dec = (scale: number, c0: number) => {
+    const c = new Uint8Array(16);
+    c[0] = c0;
+    return SJ.decimal128(scale, c);
+  };
+  const cases: [string, any][] = [
+    ["null", SJ.null()],
+    ["bool_true", SJ.bool(true)],
+    ["int_5", SJ.int64(5)],
+    ["int_neg17", SJ.int64(-17)],
+    ["int_127", SJ.int64(127)],
+    ["uint_42", SJ.uint64(42)],
+    ["uint_2p63", SJ.uint64(9223372036854775808n)],
+    ["bigint_1", SJ.bigint(1n)],
+    ["bigint_2p64", SJ.bigint(18446744073709551616n)],
+    ["dec_2_150", dec(2, 150)],
+    ["dec_2_42", dec(2, 42)],
+    ["float_nan", SJ.float64(NaN)],
+    ["float_negzero", SJ.float64(-0)],
+    ["str_unicode", SJ.string("h\u00e9llo")],
+    ["bytes", SJ.bytes(new Uint8Array([0, 1, 2]))],
+    ["dt_neg", SJ.datetime64(-1n)],
+    ["arr", SJ.array([SJ.int64(1), SJ.int64(2), SJ.int64(3)])],
+    ["obj", SJ.object({ a: SJ.int64(1), b: SJ.int64(2) })],
+  ];
+  for (const [name, v] of cases) {
+    process.stdout.write(`${name}\t${Buffer.from(encode(v)).toString("hex")}\n`);
+  }
+  process.exit(0);
+}
 
 const chunks: Buffer[] = [];
 process.stdin.on("data", (c: Buffer) => chunks.push(c));

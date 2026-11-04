@@ -20,7 +20,7 @@
 //! output. Offsets are captured during decode (not guessed), mirroring `cowrie_ref.tensor_spans`.
 use cowrie_rs::gen2::{
     address_of_bytes, decode_file, decode_framed, decode_framed_strict, encode, encode_file,
-    encode_framed, merkle_root, schema_fingerprint64, tensor_spans, to_hex, Compression,
+    encode_framed, merkle_root, schema_fingerprint64, tensor_spans, to_hex, Compression, Value,
 };
 use std::io::{Read, Write};
 
@@ -36,6 +36,12 @@ fn main() {
     let framed_mode = std::env::args()
         .skip(1)
         .find_map(|a| a.strip_prefix("--framed=").map(|s| s.to_string()));
+
+    // --- constructor-gate cases: build each value in code and print name<TAB>hex ---
+    if std::env::args().skip(1).any(|a| a == "--cases") {
+        cases_mode();
+        return;
+    }
 
     let mut data = Vec::new();
     std::io::stdin().read_to_end(&mut data).expect("failed to read stdin");
@@ -188,4 +194,64 @@ fn main() {
             std::process::exit(1);
         }
     }
+}
+
+/// Construct the shared constructor-gate cases and print `name<TAB>hex`. tools/constructor_gate.py
+/// compares this against the Python reference: a value built in Rust that does not match the
+/// oracle fails the gate.
+fn cases_mode() {
+    use std::collections::BTreeMap;
+
+    let dec = |scale_zigzag: u8, coef0: u8| -> Value {
+        // the wire form a decoder produces: varint(zigzag(scale)) + 16-byte LE coefficient
+        let mut v = vec![scale_zigzag];
+        let mut c = [0u8; 16];
+        c[0] = coef0;
+        v.extend_from_slice(&c);
+        Value::Decimal(v)
+    };
+
+    let mut uuid = [0u8; 16];
+    for (i, b) in uuid.iter_mut().enumerate() {
+        *b = (i + 1) as u8;
+    }
+
+    let mut obj = BTreeMap::new();
+    obj.insert("a".to_string(), Value::Int(1));
+    obj.insert("b".to_string(), Value::Int(2));
+
+    let cases: Vec<(&str, Value)> = vec![
+        ("null", Value::Null),
+        ("bool_true", Value::Bool(true)),
+        ("int_5", Value::Int(5)),
+        ("int_neg17", Value::Int(-17)),
+        ("int_127", Value::Int(127)),
+        ("uint_42", Value::Uint(42)),
+        ("uint_2p63", Value::Uint(1 << 63)),
+        ("bigint_1", Value::BigInt(vec![1])),
+        ("bigint_2p64", Value::BigInt(vec![0, 0, 0, 0, 0, 0, 0, 0, 1])),
+        ("dec_2_150", dec(4, 150)), // zigzag(2) = 4
+        ("dec_2_42", dec(4, 42)),
+        ("float_nan", Value::Float(f64::NAN)),
+        ("float_negzero", Value::Float(-0.0)),
+        ("str_unicode", Value::String("héllo".to_string())),
+        ("bytes", Value::Bytes(vec![0, 1, 2])),
+        ("dt_neg", Value::DateTime(-1)),
+        ("arr", Value::Array(vec![Value::Int(1), Value::Int(2), Value::Int(3)])),
+        ("obj", Value::Object(obj)),
+    ];
+
+    for (name, v) in cases {
+        match encode(&v) {
+            Ok(b) => {
+                let hex: String = b.iter().map(|x| format!("{:02x}", x)).collect();
+                println!("{}\t{}", name, hex);
+            }
+            Err(e) => {
+                eprintln!("{}: {:?}", name, e);
+                std::process::exit(1);
+            }
+        }
+    }
+    let _ = uuid;
 }
