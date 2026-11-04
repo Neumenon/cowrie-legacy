@@ -109,6 +109,25 @@ process.stdin.on("end", () => {
     } else if (fileRecode) {
       const frames = decodeFile(data, true);
       process.stdout.write(Buffer.from(encodeFile(frames)));
+    } else if (process.argv.includes("--pack")) {
+      // framed canonical messages -> one CWRF file (§7)
+      const frames = parseFramedStream(data);
+      frames.forEach((fr, i) => {
+        try {
+          decodeFramed(fr, { strict: true });
+        } catch (e: any) {
+          throw new Error(`pack: frame ${i}: ${e.code ?? e.message}`);
+        }
+      });
+      process.stdout.write(Buffer.from(encodeFile(frames)));
+    } else if (process.argv.includes("--verify")) {
+      try {
+        const id = fileIdentity(data);
+        process.stdout.write(Buffer.from(id).toString("hex") + " OK\n");
+      } catch (e: any) {
+        process.stdout.write(`FAIL: ${e.code ?? e.message}\n`);
+        process.exitCode = 1;
+      }
     } else if (framedMode !== null) {
       let compression: Compression;
       if (framedMode === "none") compression = Compression.NONE;
@@ -131,3 +150,30 @@ process.stdin.on("end", () => {
     process.exit(1);
   }
 });
+
+/** Parse uvarint(count) followed by count x (uvarint(len) || bytes). */
+function parseFramedStream(data: Uint8Array): Uint8Array[] {
+  let pos = 0;
+  const readUvarint = (): bigint => {
+    let v = 0n;
+    let shift = 0n;
+    for (;;) {
+      if (pos >= data.length) throw new Error("truncated varint");
+      const b = data[pos++];
+      v |= BigInt(b & 0x7f) << shift;
+      if ((b & 0x80) === 0) return v;
+      shift += 7n;
+      if (shift >= 64n) throw new Error("varint overflow");
+    }
+  };
+  const n = Number(readUvarint());
+  const frames: Uint8Array[] = [];
+  for (let i = 0; i < n; i++) {
+    const ln = Number(readUvarint());
+    if (pos + ln > data.length) throw new Error(`frame ${i} runs past the input`);
+    frames.push(data.subarray(pos, pos + ln));
+    pos += ln;
+  }
+  if (pos !== data.length) throw new Error(`${data.length - pos} trailing bytes after the last frame`);
+  return frames;
+}

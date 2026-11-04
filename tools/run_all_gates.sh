@@ -16,6 +16,7 @@
 #   (e) differential fuzz (150)      (generative cross-lang determinism)
 #   (f) byte-space law               (strict-accepted bytes must BE canonical; mutated corpus)
 #   (g) constructor parity           (the same value built in code encodes identically, 4 langs)
+#   (h) pack / verify                (one self-certifying file: identical bytes, one root, tamper-proof)
 #
 # Usage:  bash tools/run_all_gates.sh
 set -euo pipefail
@@ -126,9 +127,13 @@ run "law_bytes 6" "${PY}" tools/law_bytes_gate.py 6
 #     (decode -> re-encode), which tests decoders and never encoders.
 run "constructor" "${PY}" tools/constructor_gate.py
 
+# (h) Pack / verify: frames -> one CWRF file. All four implementations must produce identical
+#     bytes, verify each other's files to the same Merkle root, and reject a tampered file.
+run "pack_verify" "${PY}" tools/pack_gate.py
+
 echo ""
 echo "=============================================================="
 echo " ✅✅✅  ALL GATES PASS  ✅✅✅"
-echo "   pytest · conformance · content-address · file-identity · tensor-view · fingerprint · dataset · negative · negative --strict · fuzz · law · constructor"
+echo "   pytest · conformance · content-address · file-identity · tensor-view · fingerprint · dataset · negative · negative --strict · fuzz · law · constructor · pack"
 echo "=============================================================="
 exit 0

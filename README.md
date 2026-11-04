@@ -191,7 +191,7 @@ The answer here is an **oracle**:
         byte-identical, or the build is red
 ```
 
-Fourteen gates run on every push, and one red gate blocks merge:
+Fifteen gates run on every push, and one red gate blocks merge:
 
 | gate | what it proves |
 |---|---|
@@ -209,6 +209,7 @@ Fourteen gates run on every push, and one red gate blocks merge:
 | `fuzz_differential` | 150 random values: Go/Rust/TS byte-identical to the oracle after decode → re-encode |
 | `law_bytes` | **both halves**: 73 canonical controls must be accepted unchanged, and 511 mutated encodings must be rejected or echoed unchanged — a strict decoder may never accept bytes and return different ones |
 | `constructor` | 18 values **built in code** in each implementation encode to the oracle's exact bytes — the only gate that tests encoders rather than decoders |
+| `pack_verify` | frames pack to identical files in all four implementations, each verifies the others' files to the same Merkle root, and a one-byte change is rejected everywhere |
 
 ```bash
 bash tools/run_all_gates.sh     # the only command that matters
@@ -408,6 +409,19 @@ Honest ledger — where it loses:
 ```bash
 git clone https://github.com/Neumenon/cowrie.git && cd cowrie
 bash tools/run_all_gates.sh      # prove it to yourself first
+```
+
+**Pack a file, verify it anywhere.** A CWRF file carries its own Merkle root, so a copy is
+self-certifying: hold the root out of band and any implementation can tell you whether a file you
+were given is the file you asked for.
+
+```bash
+# frames on stdin: uvarint(count), then count x (uvarint(len) || canonical message)
+cowrie pack < frames.bin > artifact.cwrf
+cowrie verify < artifact.cwrf          # <merkle-root-hex> OK   (exit 1 on tampering)
+
+# the same file, checked by a different language
+cd typescript && npx tsx recode.ts --verify < ../artifact.cwrf
 ```
 
 **Go**

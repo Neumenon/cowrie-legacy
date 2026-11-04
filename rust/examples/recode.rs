@@ -20,7 +20,8 @@
 //! output. Offsets are captured during decode (not guessed), mirroring `cowrie_ref.tensor_spans`.
 use cowrie_rs::gen2::{
     address_of_bytes, decode_file, decode_framed, decode_framed_strict, encode, encode_file,
-    encode_framed, merkle_root, schema_fingerprint64, tensor_spans, to_hex, Compression, Value,
+    encode_framed, file_identity, merkle_root, schema_fingerprint64, tensor_spans, to_hex,
+    Compression, Value,
 };
 use std::io::{Read, Write};
 
@@ -70,6 +71,38 @@ fn main() {
             },
             Err(e) => {
                 eprintln!("{}: {}", e.err_code(), e);
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+
+    // --- pack: framed canonical messages -> one CWRF file (§7) ---
+    if std::env::args().skip(1).any(|a| a == "--pack") {
+        let frames = match parse_framed_stream(&data) {
+            Ok(f) => f,
+            Err(e) => {
+                eprintln!("pack: {}", e);
+                std::process::exit(1);
+            }
+        };
+        for (i, fr) in frames.iter().enumerate() {
+            if let Err(e) = decode_framed_strict(fr) {
+                eprintln!("pack: frame {}: {:?}", i, e);
+                std::process::exit(1);
+            }
+        }
+        let out = encode_file(&frames);
+        std::io::stdout().write_all(&out).expect("stdout");
+        return;
+    }
+
+    // --- verify: a CWRF file -> "<root> OK" or a hard fail ---
+    if std::env::args().skip(1).any(|a| a == "--verify") {
+        match file_identity(&data) {
+            Ok(id) => println!("{} OK", to_hex(&id)),
+            Err(e) => {
+                println!("FAIL: {:?}", e);
                 std::process::exit(1);
             }
         }
@@ -254,4 +287,42 @@ fn cases_mode() {
         }
     }
     let _ = uuid;
+}
+
+/// Parse uvarint(count) followed by count x (uvarint(len) || bytes).
+fn parse_framed_stream(data: &[u8]) -> Result<Vec<Vec<u8>>, String> {
+    let mut pos = 0usize;
+    let mut read_uvarint = |pos: &mut usize| -> Result<u64, String> {
+        let mut v: u64 = 0;
+        let mut shift = 0u32;
+        loop {
+            if *pos >= data.len() {
+                return Err("truncated varint".into());
+            }
+            let b = data[*pos];
+            *pos += 1;
+            v |= ((b & 0x7f) as u64) << shift;
+            if b & 0x80 == 0 {
+                return Ok(v);
+            }
+            shift += 7;
+            if shift >= 64 {
+                return Err("varint overflow".into());
+            }
+        }
+    };
+    let n = read_uvarint(&mut pos)?;
+    let mut frames = Vec::with_capacity(n as usize);
+    for i in 0..n {
+        let ln = read_uvarint(&mut pos)? as usize;
+        if pos + ln > data.len() {
+            return Err(format!("frame {} runs past the input", i));
+        }
+        frames.push(data[pos..pos + ln].to_vec());
+        pos += ln;
+    }
+    if pos != data.len() {
+        return Err(format!("{} trailing bytes after the last frame", data.len() - pos));
+    }
+    Ok(frames)
 }

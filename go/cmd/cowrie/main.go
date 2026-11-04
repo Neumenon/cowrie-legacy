@@ -49,6 +49,10 @@ func main() {
 		decodeCmd(os.Args[2:])
 	case "recode":
 		recodeCmd(os.Args[2:])
+	case "pack":
+		packCmd()
+	case "verify":
+		verifyCmd()
 	case "cases":
 		casesCmd()
 	case "info":
@@ -496,4 +500,91 @@ func casesCmd() {
 		}
 		fmt.Printf("%s\t%s\n", c.name, hex.EncodeToString(b))
 	}
+}
+
+// readFramedStream parses uvarint(count) followed by count x (uvarint(len) || bytes).
+func readFramedStream(r io.Reader) ([][]byte, error) {
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return nil, err
+	}
+	pos := 0
+	readUvarint := func() (uint64, error) {
+		var v uint64
+		var shift uint
+		for {
+			if pos >= len(data) {
+				return 0, fmt.Errorf("truncated varint")
+			}
+			b := data[pos]
+			pos++
+			v |= uint64(b&0x7f) << shift
+			if b&0x80 == 0 {
+				return v, nil
+			}
+			shift += 7
+			if shift >= 64 {
+				return 0, fmt.Errorf("varint overflow")
+			}
+		}
+	}
+	n, err := readUvarint()
+	if err != nil {
+		return nil, err
+	}
+	frames := make([][]byte, 0, n)
+	for i := uint64(0); i < n; i++ {
+		ln, err := readUvarint()
+		if err != nil {
+			return nil, err
+		}
+		if pos+int(ln) > len(data) {
+			return nil, fmt.Errorf("frame %d runs past the input", i)
+		}
+		frames = append(frames, data[pos:pos+int(ln)])
+		pos += int(ln)
+	}
+	if pos != len(data) {
+		return nil, fmt.Errorf("%d trailing bytes after the last frame", len(data)-pos)
+	}
+	return frames, nil
+}
+
+// packCmd: framed canonical messages on stdin -> a CWRF file on stdout.
+func packCmd() {
+	frames, err := readFramedStream(os.Stdin)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "pack: %v\n", err)
+		os.Exit(1)
+	}
+	values := make([]*cowrie.Value, 0, len(frames))
+	for i, fr := range frames {
+		v, derr := cowrie.Decode(fr) // strict: a file may only hold canonical frames
+		if derr != nil {
+			fmt.Fprintf(os.Stderr, "pack: frame %d: %v\n", i, derr)
+			os.Exit(1)
+		}
+		values = append(values, v)
+	}
+	out, encErr := cowrie.EncodeFile(values)
+	if encErr != nil {
+		fmt.Fprintf(os.Stderr, "pack: %v\n", encErr)
+		os.Exit(1)
+	}
+	os.Stdout.Write(out)
+}
+
+// verifyCmd: a CWRF file on stdin -> "<root> OK" or a hard fail with the reason.
+func verifyCmd() {
+	data, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "verify: %v\n", err)
+		os.Exit(1)
+	}
+	id, err := cowrie.FileIdentityHex(data)
+	if err != nil {
+		fmt.Printf("FAIL: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("%s OK\n", id)
 }
