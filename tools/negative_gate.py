@@ -29,7 +29,9 @@ TS_DIR = os.path.join(ROOT, "typescript")
 TSX = os.path.join(TS_DIR, "node_modules/.bin/tsx")
 
 STRICT = "--strict" in sys.argv
-_S = ["--strict"] if STRICT else []
+# §5.3 strict-by-default in all three recode CLIs: the LENIENT pass drives the CLIs
+# with an explicit --lenient opt-out (the legacy --strict flag is still accepted).
+_S = ["--strict"] if STRICT else ["--lenient"]
 IMPLS = {
     "go":   ([GO_CLI, "recode", *_S], None),
     "rust": ([RUST, *_S], None),
@@ -53,7 +55,7 @@ def probe(cmd: list[str], raw: bytes, cwd: str | None) -> tuple[str, str]:
 
 
 def main() -> int:
-    mode = "STRICT (§5.3)" if STRICT else "lenient (default decode)"
+    mode = "STRICT (§5.3)" if STRICT else "lenient (--lenient opt-out)"
     print(f"Negative / anti-malleability gate [{mode}] — {len(NEG)} fixtures\n")
     cols = "  (go/rust/ts behavior; STRICT also checks exact ERR_* code)"
     print(f"{'fixture':22}{'tier':14}{'expect':22}{'go':>10}{'rust':>10}{'ts':>10}{cols if False else ''}")

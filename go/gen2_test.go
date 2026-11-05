@@ -134,7 +134,10 @@ func TestDecimal128(t *testing.T) {
 		t.Fatalf("Encode failed: %v", err)
 	}
 
-	decoded, err := Decode(data)
+	// lenient: the raw 16-byte coefficient layout here is also exercised as a
+	// byte-fidelity roundtrip (scale/coef bytes unchanged); strict §5.3 lowest-
+	// terms enforcement is gated by the golden vectors.
+	decoded, err := DecodeWithOptions(data, DecodeOptions{})
 	if err != nil {
 		t.Fatalf("Decode failed: %v", err)
 	}

@@ -1562,7 +1562,9 @@ export function decode(data: Uint8Array, opts: DecodeOptions = {}): Value {
     data,
     opts.onUnknownExt ?? UnknownExtBehavior.KEEP,
     resolveLimits(opts),
-    opts.strict ?? false,
+    // SPEC-v1 §5.3: strict-by-default, matching cowrie_ref.decode(strict=True).
+    // A lenient decode is an explicit opt-out (opts.strict = false).
+    opts.strict ?? true,
   ).decode();
 }
 

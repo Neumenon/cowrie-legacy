@@ -53,9 +53,10 @@ function expectCode(fn: () => unknown, code: string): void {
 
 describe('Bug (1): decode failures carry a stable ERR_* code (Python-oracle parity)', () => {
   it('OBJECT arm with field id >= dict length rejects with ERR_INVALID_FIELD_ID', () => {
-    // dict empty (00) + OBJECT tag (07) + count uvarint 01 + fieldId uvarint 00.
-    // dict has 0 keys, so fieldId 0 is out of range. Oracle -> ERR_INVALID_FIELD_ID.
-    const data = hex(HEADER + '00' + '07' + '01' + '00');
+    // dict empty (00) + FIXMAP(1) tag (d1 — strict §5.3 wants FIXMAP for counts <= 15)
+    // + fieldId uvarint 00. dict has 0 keys, so fieldId 0 is out of range.
+    // Oracle -> ERR_INVALID_FIELD_ID.
+    const data = hex(HEADER + '00' + 'd1' + '00');
     expectCode(() => decode(data), ERR_INVALID_FIELD_ID);
   });
 

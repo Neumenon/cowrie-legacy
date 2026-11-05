@@ -240,7 +240,8 @@ func failDecode(err error) {
 // across Go/Rust/Python/TS. JSON-projection-independent — tests identity, not display.
 func recodeCmd(args []string) {
 	fs := flag.NewFlagSet("recode", flag.ExitOnError)
-	strict := fs.Bool("strict", false, "Strict-decode mode (§5.3): reject non-canonical input")
+	strict := fs.Bool("strict", false, "Strict-decode mode (§5.3): reject non-canonical input. Strict is now the DEFAULT; this flag is kept for compatibility.")
+	lenient := fs.Bool("lenient", false, "Lenient-decode opt-out (§5.3): accept well-formed but non-canonical input")
 	addr := fs.Bool("addr", false, "Print the content-address (§3) multihash SHA-256 hex of the canonical bytes")
 	fileID := fs.Bool("file-id", false, "Read a Cowrie FILE (§7) on stdin, decode+verify, print merkle_root as lowercase hex")
 	fileRecode := fs.Bool("file-recode", false, "Read a Cowrie FILE (§7) on stdin, decode, re-encode, write raw bytes to stdout")
@@ -362,8 +363,8 @@ func recodeCmd(args []string) {
 		os.Exit(1)
 	}
 	var val *cowrie.Value
-	if *strict {
-		val, err = cowrie.DecodeFramedStrict(input)
+	if *lenient && !*strict {
+		val, err = cowrie.DecodeFramedWithLimitAndOptions(input, cowrie.DefaultMaxBytesLen, cowrie.DecodeOptions{})
 	} else {
 		val, err = cowrie.DecodeFramed(input)
 	}

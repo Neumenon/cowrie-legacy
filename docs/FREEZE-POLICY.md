@@ -95,6 +95,12 @@ of running — a bare message with a non-zero compression byte, and a Decimal128
 int64 to int32 — neither of which any of the fifteen deterministic gates caught. 7 is this document, unratified. 8 does not hold and
 cannot be manufactured.
 
+*Since then:* strict-by-default decode landed in all four decoders (Go / Rust / TS flipped to match
+the Python oracle; lenient is now an explicit `--lenient` / `strict:false` opt-out, closing the
+last cross-language asymmetry — a `--strict` flag is kept for CLI compatibility but is the default),
+and the framed-composite §2.2 gate is in CI (header parity plus the go/rust/ts × go/rust/ts
+cross-decode matrix — the corner where TS previously emitted bytes no other decoder could read).
+
 ---
 
 ## What freezing costs, and when to pay it

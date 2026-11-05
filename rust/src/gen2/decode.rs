@@ -50,7 +50,9 @@ impl Default for DecodeOptions {
             max_ext_len: 1_000_000,     // Tightened: was 100M
             max_dict_len: 1_000_000,    // Tightened: was 10M
             max_rank: 32,
-            strict: false,
+            // SPEC-v1 §5.3: strict-by-default, matching cowrie_ref.decode(strict=True).
+            // A lenient decode is an explicit opt-out (options strict = false).
+            strict: true,
         }
     }
 }

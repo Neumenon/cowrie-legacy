@@ -44,13 +44,20 @@ function encStr(s: string): number[] {
  * Build a minimal Gen2 stream with a 2-field object:
  *   { [dictKey0]: <reservedTag, payloadLen bytes>, [dictKey1]: "hello" }
  */
+/**
+ * Build a minimal Gen2 stream with a 2-field object:
+ *   { [dictKey0]: "hello", [dictKey1]: <reservedTag, payloadLen bytes> }
+ * The §2.4 dictionary is byte-sorted ("kept" < "reserved") so an object with fields
+ * in ascending dictIdx order is canonical and strict decode (§5.3 default) reaches
+ * the reserved-tag field instead of rejecting the framing first.
+ */
 function buildStream(reservedTag: number, payloadLen: number): Uint8Array {
   const MAGIC = [0x43, 0x4f, 0x57, 0x52]; // 'COWR' (SPEC-v1 §2.2)
   const VERSION = 1;
   const COMPRESSION = 0; // none
 
-  const key0 = 'reserved';
-  const key1 = 'kept';
+  const key0 = 'kept';
+  const key1 = 'reserved';
   const keptValue = 'hello';
 
   const payload = Array.from({ length: payloadLen }, (_, i) => 0xaa + (i & 0xf));
@@ -59,21 +66,21 @@ function buildStream(reservedTag: number, payloadLen: number): Uint8Array {
     ...MAGIC,
     VERSION,
     COMPRESSION,
-    // dict: 2 entries
+    // dict: 2 entries, byte-sorted (§2.4)
     ...uvarint(2),
     ...encStr(key0),
     ...encStr(key1),
     // root: FIXMAP with 2 entries (Tag.FIXMAP_BASE = 0xD0)
     0xd0 + 2,
-    // field 0: dict index 0, reserved tag, payload
+    // field 0: dict index 0 ("kept"), STRING tag (0x05), "hello"
     ...uvarint(0),
+    0x05,
+    ...encStr(keptValue),
+    // field 1: dict index 1 ("reserved"), reserved tag, payload
+    ...uvarint(1),
     reservedTag,
     ...uvarint(payloadLen),
     ...payload,
-    // field 1: dict index 1, STRING tag (0x05), "hello"
-    ...uvarint(1),
-    0x05,
-    ...encStr(keptValue),
   ];
 
   return new Uint8Array(bytes);

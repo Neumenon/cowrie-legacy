@@ -26,8 +26,10 @@ use cowrie_rs::gen2::{
 use std::io::{Read, Write};
 
 fn main() {
-    let strict = std::env::args().skip(1).any(|a| a == "--strict")
-        || std::env::var("STRICT").map(|v| v == "1").unwrap_or(false);
+    // §5.3 strict-by-default: recode is strict unless the caller opts out with
+    // --lenient / LENIENT=1. // (The legacy --strict flag is accepted, now a no-op.)
+    let strict = !std::env::args().skip(1).any(|a| a == "--lenient")
+        && std::env::var("LENIENT").map(|v| v != "1").unwrap_or(true);
     let addr = std::env::args().skip(1).any(|a| a == "--addr");
     let file_id = std::env::args().skip(1).any(|a| a == "--file-id");
     let file_recode = std::env::args().skip(1).any(|a| a == "--file-recode");

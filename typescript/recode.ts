@@ -15,7 +15,11 @@
 //                   byte-for-byte for canonical files).
 import { encode, decode, encodeFramed, decodeFramed, addressOfBytes, decodeFile, encodeFile, fileIdentity, tensorSpans, schemaFingerprint64, merkleRoot, Compression, SJ } from "./src/gen2/index";
 
-const strict = process.argv.includes("--strict") || process.env.STRICT === "1";
+// Strict mode (SPEC-v1 §5.3): DEFAULT strict, matching the library decode() default and
+// the Python oracle. Lenient opt-out: pass --lenient or set LENIENT=1 (the legacy --strict
+// flag is accepted, now a no-op).
+const strict =
+  !(process.argv.includes("--lenient") || process.env.LENIENT === "1");
 // Dataset/stream layer Merkle root (SPEC-v1 §7 dataset_root): read uvarint(n) then n
 // repetitions of (uvarint(len) || blob_bytes) from stdin, compute the §7 merkleRoot over
 // that ORDERED list of blobs (shard file-roots), print the 34-byte multihash as 68 hex chars.
